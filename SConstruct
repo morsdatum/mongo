@@ -848,7 +848,7 @@ if nix:
     env.Append( LIBS=[] )
 
     #make scons colorgcc friendly
-    for key in ('HOME', 'TERM'):
+    for key in ('HOME', 'TERM', 'PATH', 'CCACHE_DIR'):
         try:
             env['ENV'][key] = os.environ[key]
         except KeyError:
