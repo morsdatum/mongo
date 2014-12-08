@@ -137,7 +137,20 @@ namespace mongo {
     SecureRandom* SecureRandom::create() {
         return new InputStreamSecureRandom( "/dev/urandom" );
     }
+#elif defined(__FreeBSD__)
+  class SRandSecureRandom : public SecureRandom {
+  public:
+    int64_t nextInt64(){
+      uint32_t a,b;
+      a = arc4random();
+      b = arc4random();
+      return (static_cast<int64_t>(a) << 32 | b);
+    }
+  };
 
+  SecureRandom* SecureRandom::create(){
+    return new SRandSecureRandom();
+  }
 #else
     class SRandSecureRandom : public SecureRandom {
     public:
