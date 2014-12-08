@@ -31,7 +31,7 @@
 #include "mongo/pch.h"
 
 #include "mongo/s/server.h"
-
+#include <cstdlib>
 #include <boost/thread/thread.hpp>
 
 #include "mongo/base/init.h"
@@ -434,6 +434,9 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 }
 #else
 int main(int argc, char* argv[], char** envp) {
+  unsetenv("LANG");
+  unsetenv("LANGUAGE");
+  setenv("LC_ALL","C",1);
     int exitCode = mongoSMain(argc, argv, envp);
     ::_exit(exitCode);
 }

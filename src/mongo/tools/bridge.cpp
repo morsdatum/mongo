@@ -27,7 +27,7 @@
  */
 
 #include "mongo/pch.h"
-
+#include <cstdlib>
 #include <boost/thread.hpp>
 
 #include "mongo/base/initializer.h"
@@ -189,6 +189,9 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 }
 #else
 int main(int argc, char* argv[], char** envp) {
+   unsetenv("LANG");
+   unsetenv("LANGUAGE");
+   setenv("LC_ALL","C",1);
     int exitCode = toolMain(argc, argv, envp);
     ::_exit(exitCode);
 }

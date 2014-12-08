@@ -33,7 +33,7 @@
 #include <boost/filesystem/operations.hpp>
 #include <fstream>
 #include <iostream>
-
+#include <cstdlib>
 #include "mongo/base/initializer.h"
 #include "mongo/base/init.h"
 #include "mongo/client/dbclient_rs.h"
@@ -390,6 +390,9 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 
 #else
 int main(int argc, char* argv[], char** envp) {
+  unsetenv("LANG");
+  unsetenv("LANGUAGE");
+  setenv("LC_ALL","C",1);
     auto_ptr<Tool> instance = (*Tool::createInstance)();
     ::_exit(instance->main(argc, argv, envp));
 }
