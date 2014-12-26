@@ -138,6 +138,7 @@ GETTIMEOFDAY
 GIDs
 Gcc
 Geoff
+GetEnvironmentVariableA
 GetFileAttributesEx
 GetFileSizeEx
 GetLastError
@@ -372,7 +373,9 @@ WiredTigerCheckpoint
 WiredTigerHome
 WiredTigerInit
 WiredTigerLog
+WiredTigerPreplog
 WiredTigerStat
+WiredTigerTmplog
 WiredTigerTxn
 WithSeeds
 Wmissing
@@ -392,6 +395,7 @@ agc
 alfred
 alloc
 allocator
+allocfile
 allocsize
 amd
 ao
@@ -636,6 +640,7 @@ func
 funcs
 gcc
 gdb
+getenv
 getfiles
 getid
 getline

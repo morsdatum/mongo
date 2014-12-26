@@ -30,9 +30,12 @@
 
 #include "mongo/platform/basic.h"
 
+#include <boost/scoped_ptr.hpp>
 #include <sstream>
 #include <string>
 
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/json.h"
 #include "mongo/db/operation_context_noop.h"
@@ -47,22 +50,36 @@
 
 namespace mongo {
 
+    using boost::scoped_ptr;
     using std::string;
     using std::stringstream;
 
     class WiredTigerHarnessHelper : public HarnessHelper {
     public:
-        WiredTigerHarnessHelper() : _dbpath( "wt_test" ), _conn( NULL ) {
+        static WT_CONNECTION* createConnection(StringData dbpath, StringData extraStrings) {
+            WT_CONNECTION* conn = NULL;
 
             std::stringstream ss;
             ss << "create,";
             ss << "statistics=(all),";
+            ss << extraStrings;
             string config = ss.str();
-            int ret = wiredtiger_open( _dbpath.path().c_str(), NULL, config.c_str(), &_conn);
-            invariantWTOK( ret );
+            int ret = wiredtiger_open(dbpath.toString().c_str(), NULL, config.c_str(), &conn);
+            ASSERT_OK(wtRCToStatus(ret));
+            ASSERT(conn);
 
-            _sessionCache = new WiredTigerSessionCache( _conn );
+            return conn;
         }
+
+        WiredTigerHarnessHelper()
+            : _dbpath("wt_test"),
+              _conn(createConnection(_dbpath.path(), "")),
+              _sessionCache(new WiredTigerSessionCache(_conn)) { }
+
+        WiredTigerHarnessHelper(StringData extraStrings)
+            : _dbpath("wt_test"),
+              _conn(createConnection(_dbpath.path(), extraStrings)),
+              _sessionCache(new WiredTigerSessionCache(_conn)) { }
 
         ~WiredTigerHarnessHelper() {
             delete _sessionCache;
@@ -256,7 +273,7 @@ namespace mongo {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
-        string uri = dynamic_cast<WiredTigerRecordStore*>( rs.get() )->GetURI();
+        string uri = dynamic_cast<WiredTigerRecordStore*>( rs.get() )->getURI();
 
         WiredTigerSizeStorer ss;
         dynamic_cast<WiredTigerRecordStore*>( rs.get() )->setSizeStorer( &ss );
@@ -455,7 +472,7 @@ namespace mongo {
                                        obj.objsize(), false ).getStatus());
             wuow.commit();
         }
-        ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(0,1)), RecordId().setInvalid());
+        ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(0,1)), boost::none);
     }
 
     TEST(WiredTigerRecordStoreTest, CappedOrder) {
@@ -541,7 +558,7 @@ namespace mongo {
         scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
         scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("local.oplog.foo",
                                                                        100000,
-                                                                       10000));
+                                                                       -1));
 
         {
             const WiredTigerRecordStore* wrs = dynamic_cast<WiredTigerRecordStore*>(rs.get());
@@ -609,5 +626,37 @@ namespace mongo {
         }
     }
 
+    TEST(WiredTigerRecordStoreTest, StorageSizeStatisticsDisabled) {
+        WiredTigerHarnessHelper harnessHelper("statistics=(none)");
+        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
 
-}
+        scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+        ASSERT_THROWS(rs->storageSize(opCtx.get()), UserException);
+    }
+
+    TEST(WiredTigerRecordStoreTest, AppendCustomStatsMetadata) {
+        WiredTigerHarnessHelper harnessHelper;
+        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
+
+        scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+        BSONObjBuilder builder;
+        rs->appendCustomStats(opCtx.get(), &builder, 1.0);
+        BSONObj customStats = builder.obj();
+
+        BSONElement wiredTigerElement = customStats.getField(kWiredTigerEngineName);
+        ASSERT_TRUE(wiredTigerElement.isABSONObj());
+        BSONObj wiredTiger = wiredTigerElement.Obj();
+
+        BSONElement metadataElement = wiredTiger.getField("metadata");
+        ASSERT_TRUE(metadataElement.isABSONObj());
+        BSONObj metadata = metadataElement.Obj();
+
+        BSONElement versionElement = metadata.getField("formatVersion");
+        ASSERT_TRUE(versionElement.isNumber());
+
+        BSONElement creationStringElement = wiredTiger.getField("creationString");
+        ASSERT_EQUALS(creationStringElement.type(), String);
+    }
+
+
+}  // namespace mongo

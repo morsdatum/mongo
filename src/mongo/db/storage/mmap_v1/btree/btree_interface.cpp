@@ -41,8 +41,8 @@ namespace mongo {
                                   typename BtreeLogic<OnDiskFormat>::Builder* builder)
             : _builder(builder), _trans(trans) { }
 
-        Status addKey(const BSONObj& key, const DiskLoc& loc) {
-            return _builder->addKey(key, loc);
+        Status addKey(const BSONObj& key, const RecordId& loc) {
+            return _builder->addKey(key, DiskLoc::fromRecordId(loc));
         }
 
     private:
@@ -79,23 +79,28 @@ namespace mongo {
 
         virtual Status insert(OperationContext* txn,
                               const BSONObj& key,
-                              const DiskLoc& loc,
+                              const RecordId& loc,
                               bool dupsAllowed) {
 
-            return _btree->insert(txn, key, loc, dupsAllowed);
+            return _btree->insert(txn, key, DiskLoc::fromRecordId(loc), dupsAllowed);
         }
 
         virtual void unindex(OperationContext* txn,
                              const BSONObj& key,
-                             const DiskLoc& loc,
+                             const RecordId& loc,
                              bool dupsAllowed) {
 
-            _btree->unindex(txn, key, loc);
+            _btree->unindex(txn, key, DiskLoc::fromRecordId(loc));
         }
 
         virtual void fullValidate(OperationContext* txn, bool full, long long *numKeysOut,
                                   BSONObjBuilder* output) const {
             *numKeysOut = _btree->fullValidate(txn, NULL, false, false, 0);
+        }
+
+        virtual bool appendCustomStats(OperationContext* txn, BSONObjBuilder* output, double scale)
+            const {
+            return false;
         }
 
         virtual long long getSpaceUsedBytes( OperationContext* txn ) const {
@@ -104,8 +109,8 @@ namespace mongo {
 
         virtual Status dupKeyCheck(OperationContext* txn,
                                    const BSONObj& key,
-                                   const DiskLoc& loc) {
-            return _btree->dupKeyCheck(txn, key, loc);
+                                   const RecordId& loc) {
+            return _btree->dupKeyCheck(txn, key, DiskLoc::fromRecordId(loc));
         }
 
         virtual bool isEmpty(OperationContext* txn) {
@@ -141,13 +146,14 @@ namespace mongo {
 
             }
 
-            virtual void aboutToDeleteBucket(const DiskLoc& bucket) {
-                if (_bucket == bucket)
+            virtual void aboutToDeleteBucket(const RecordId& bucket) {
+                if (_bucket.toRecordId() == bucket)
                     _ofs = -1;
             }
 
-            virtual bool locate(const BSONObj& key, const DiskLoc& loc) {
-                return _btree->locate(_txn, key, loc, _direction, &_ofs, &_bucket);
+            virtual bool locate(const BSONObj& key, const RecordId& loc) {
+                return _btree->locate(_txn, key, DiskLoc::fromRecordId(loc), _direction, &_ofs,
+                                      &_bucket);
             }
 
             virtual void customLocate(const BSONObj& keyBegin,
@@ -161,7 +167,7 @@ namespace mongo {
                                      &_ofs,
                                      keyBegin,
                                      keyBeginLen,
-                                     afterKey, 
+                                     afterKey,
                                      keyEnd,
                                      keyEndInclusive,
                                      _direction);
@@ -188,8 +194,12 @@ namespace mongo {
                 return _btree->getKey(_txn, _bucket, _ofs);
             }
 
-            virtual RecordId getRecordId() const {
+            DiskLoc getDiskLoc() const {
                 return _btree->getDiskLoc(_txn, _bucket, _ofs);
+            }
+
+            virtual RecordId getRecordId() const {
+                return getDiskLoc().toRecordId();
             }
 
             virtual void advance() {
@@ -201,7 +211,7 @@ namespace mongo {
             virtual void savePosition() {
                 if (!_bucket.isNull()) {
                     _savedKey = getKey().getOwned();
-                    _savedLoc = getRecordId();
+                    _savedLoc = getDiskLoc();
                 }
             }
 

@@ -75,97 +75,34 @@ namespace mongo {
         lockState->setIsBatchWriter(true);
     }
 
-    Lock::ScopedLock::ParallelBatchWriterSupport::ParallelBatchWriterSupport(Locker* lockState)
+
+    Lock::ScopedLock::ScopedLock(Locker* lockState)
         : _lockState(lockState) {
-        relock();
-    }
 
-    void Lock::ScopedLock::ParallelBatchWriterSupport::tempRelease() {
-        _lk.reset( 0 );
-    }
-
-    void Lock::ScopedLock::ParallelBatchWriterSupport::relock() {
         if (!_lockState->isBatchWriter()) {
             AcquiringParallelWriter a(_lockState);
-            _lk.reset( new RWLockRecursive::Shared(ParallelBatchWriterMode::_batchLock) );
+            _pbws_lk.reset(new RWLockRecursive::Shared(ParallelBatchWriterMode::_batchLock));
         }
     }
 
-
-    Lock::ScopedLock::ScopedLock(Locker* lockState, char type)
-        : _lockState(lockState), _pbws_lk(lockState), _type(type) {
-
-        _lockState->enterScopedLock(this);
-    }
-
-    Lock::ScopedLock::~ScopedLock() { 
-        _lockState->leaveScopedLock(this);
-    }
-
-    void Lock::ScopedLock::tempRelease() {
-        _tempRelease();
-        _pbws_lk.tempRelease();
-    }
-
-    void Lock::ScopedLock::relock() {
-        _pbws_lk.relock();
-        _relock();
-    }
-
-    void Lock::ScopedLock::_tempRelease() {
-        // TempRelease is only used for global locks
-        invariant(false);
-    }
-
-    void Lock::ScopedLock::_relock() {
-        // TempRelease is only used for global locks
-        invariant(false);
-    }
 
     Lock::TempRelease::TempRelease(Locker* lockState)
-        : cant(lockState->isRecursive()), _lockState(lockState) {
+        : _lockState(lockState),
+          _lockSnapshot(),
+          _locksReleased(_lockState->saveLockStateAndUnlock(&_lockSnapshot)) {
 
-        if (cant) {
-            return;
-        }
-
-        fassert(16116, _lockState->recursiveCount() == 1);
-        fassert(16117, _lockState->isLocked());
-        
-        scopedLk = _lockState->getCurrentScopedLock();
-        fassert(16118, scopedLk);
-
-        invariant(_lockState == scopedLk->_lockState);
-
-        scopedLk->tempRelease();
-        _lockState->leaveScopedLock(scopedLk);
     }
 
     Lock::TempRelease::~TempRelease() {
-        if (cant) {
-            return;
+        if (_locksReleased) {
+            invariant(!_lockState->isLocked());
+            _lockState->restoreLockState(_lockSnapshot);
         }
-        
-        fassert(16119, scopedLk);
-        fassert(16120, !_lockState->isLocked());
-
-        _lockState->enterScopedLock(scopedLk);
-        scopedLk->relock();
     }
 
-    void Lock::GlobalWrite::_tempRelease() { 
-        invariant(_lockState->isW());
-
-        invariant(_lockState->unlockAll());
-    }
-    void Lock::GlobalWrite::_relock() { 
-        invariant(!_lockState->isLocked());
-
-        _lockState->lockGlobal(MODE_X);
-    }
 
     Lock::GlobalWrite::GlobalWrite(Locker* lockState, unsigned timeoutms)
-        : ScopedLock(lockState, 'W') {
+        : ScopedLock(lockState) {
 
         LockResult result = _lockState->lockGlobal(MODE_X, timeoutms);
         if (result == LOCK_TIMEOUT) {
@@ -180,8 +117,9 @@ namespace mongo {
         _lockState->unlockAll();
     }
 
+
     Lock::GlobalRead::GlobalRead(Locker* lockState, unsigned timeoutms)
-        : ScopedLock(lockState, 'R') {
+        : ScopedLock(lockState) {
 
         LockResult result = _lockState->lockGlobal(MODE_S, timeoutms);
         if (result == LOCK_TIMEOUT) {
@@ -193,19 +131,15 @@ namespace mongo {
         _lockState->unlockAll();
     }
 
-    Lock::DBLock::DBLock(Locker* lockState, const StringData& db, const LockMode mode)
-        : ScopedLock(lockState, mode == MODE_S || mode == MODE_IS ? 'r' : 'w'),
+
+    Lock::DBLock::DBLock(Locker* lockState, const StringData& db, LockMode mode)
+        : ScopedLock(lockState),
           _id(RESOURCE_DATABASE, db),
+          _lockState(lockState),
           _mode(mode) {
+
         massert(28539, "need a valid database name", !db.empty() && nsIsDbOnly(db));
-        lockDB();
-    }
 
-    Lock::DBLock::~DBLock() {
-        unlockDB();
-    }
-
-    void Lock::DBLock::lockDB() {
         const bool isRead = (_mode == MODE_S || _mode == MODE_IS);
 
         _lockState->lockGlobal(isRead ? MODE_IS : MODE_IX);
@@ -215,6 +149,12 @@ namespace mongo {
         else {
             _lockState->lock(_id, isRead ? MODE_S : MODE_X);
         }
+    }
+
+    Lock::DBLock::~DBLock() {
+        _lockState->unlock(_id);
+
+        _lockState->unlockAll();
     }
 
     void Lock::DBLock::relockWithMode(const LockMode newMode) {
@@ -238,11 +178,6 @@ namespace mongo {
         }
     }
 
-    void Lock::DBLock::unlockDB() {
-        _lockState->unlock(_id);
-
-        _lockState->unlockAll();
-    }
 
     Lock::CollectionLock::CollectionLock(Locker* lockState,
                                          const StringData& ns,
@@ -276,8 +211,8 @@ namespace mongo {
         if (supportsDocLocking() || enableCollectionLocking) {
             _lockState->lock(_id, mode);
         }
-
     }
+
 
     Lock::ResourceLock::ResourceLock(Locker* lockState, ResourceId rid, LockMode mode)
             : _rid(rid),
@@ -289,8 +224,6 @@ namespace mongo {
         _lockState->unlock(_rid);
     }
 
-    Lock::DBRead::DBRead(Locker* lockState, const StringData& dbOrNs) :
-        DBLock(lockState, nsToDatabaseSubstring(dbOrNs), MODE_S) { }
 
     writelocktry::writelocktry(Locker* lockState, int tryms) :
         _got( false ),
@@ -309,6 +242,7 @@ namespace mongo {
 
     }
 
+
     // note: the 'already' concept here might be a bad idea as a temprelease wouldn't notice it is nested then
     readlocktry::readlocktry(Locker* lockState, int tryms) :
         _got( false ),
@@ -326,5 +260,4 @@ namespace mongo {
     readlocktry::~readlocktry() {
 
     }
-
 }

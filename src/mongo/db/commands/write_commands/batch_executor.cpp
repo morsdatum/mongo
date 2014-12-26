@@ -46,11 +46,15 @@
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/catalog/index_create.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
-#include "mongo/db/ops/delete_executor.h"
+#include "mongo/db/exec/delete.h"
+#include "mongo/db/exec/update.h"
 #include "mongo/db/ops/delete_request.h"
+#include "mongo/db/ops/parsed_delete.h"
+#include "mongo/db/ops/parsed_update.h"
 #include "mongo/db/ops/insert.h"
-#include "mongo/db/ops/update_executor.h"
 #include "mongo/db/ops/update_lifecycle_impl.h"
+#include "mongo/db/query/get_executor.h"
+#include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/query_knobs.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_coordinator_global.h"
@@ -153,7 +157,7 @@ namespace mongo {
     Status WriteBatchExecutor::validateBatch( const BatchedCommandRequest& request ) {
 
         // Validate namespace
-        const NamespaceString nss = NamespaceString( request.getNS() );
+        const NamespaceString& nss = request.getNSS();
         if ( !nss.isValid() ) {
             return Status( ErrorCodes::InvalidNamespace,
                            nss.ns() + " is not a valid namespace" );
@@ -428,8 +432,8 @@ namespace mongo {
                                   const BatchedCommandRequest& request,
                                   WriteOpResult* result) {
 
-        const NamespaceString nss( request.getTargetingNS() );
-        txn->lockState()->assertWriteLocked( nss.ns() );
+        const NamespaceString& nss = request.getTargetingNSS();
+        dassert(txn->lockState()->isCollectionLockedForMode(nss.ns(), MODE_IX));
 
         ChunkVersion requestShardVersion =
             request.isMetadataSet() && request.getMetadata()->isShardVersionSet() ?
@@ -455,13 +459,13 @@ namespace mongo {
         return true;
     }
 
-    static bool checkIsMasterForDatabase(const std::string& ns, WriteOpResult* result) {
+    static bool checkIsMasterForDatabase(const NamespaceString& ns, WriteOpResult* result) {
         if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                NamespaceString(ns).db())) {
+                ns.db())) {
             WriteErrorDetail* errorDetail = new WriteErrorDetail;
             result->setError(errorDetail);
             errorDetail->setErrCode(ErrorCodes::NotMaster);
-            errorDetail->setErrMessage("Not primary while writing to " + ns);
+            errorDetail->setErrMessage("Not primary while writing to " + ns.toString());
             return false;
         }
         return true;
@@ -481,8 +485,8 @@ namespace mongo {
                                       const BatchedCommandRequest& request,
                                       WriteOpResult* result) {
 
-        const NamespaceString nss( request.getTargetingNS() );
-        txn->lockState()->assertWriteLocked( nss.ns() );
+        const NamespaceString& nss = request.getTargetingNSS();
+        dassert(txn->lockState()->isCollectionLockedForMode(nss.ns(), MODE_IX));
 
         if ( !request.isUniqueIndexRequest() )
             return true;
@@ -512,10 +516,10 @@ namespace mongo {
     // HELPERS FOR CUROP MANAGEMENT AND GLOBAL STATS
     //
 
-    static CurOp* beginCurrentOp( Client* client, const BatchItemRef& currWrite ) {
+    static void beginCurrentOp( CurOp* currentOp, Client* client, const BatchItemRef& currWrite ) {
 
         // Execute the write item as a child operation of the current operation.
-        auto_ptr<CurOp> currentOp( new CurOp( client, client->curop() ) );
+        // This is not done by out callers
 
         // Set up the child op with more info
         HostAndPort remote =
@@ -547,7 +551,6 @@ namespace mongo {
             currentOp->debug().ndeleted = 0;
         }
 
-        return currentOp.release();
     }
 
     void WriteBatchExecutor::incOpStats( const BatchItemRef& currWrite ) {
@@ -883,7 +886,8 @@ namespace mongo {
                                          WriteErrorDetail** error ) {
 
         // BEGIN CURRENT OP
-        scoped_ptr<CurOp> currentOp( beginCurrentOp( _txn->getClient(), updateItem ) );
+        CurOp currentOp( _txn->getClient(), _txn->getClient()->curop() );
+        beginCurrentOp( &currentOp, _txn->getClient(), updateItem );
         incOpStats( updateItem );
 
         WriteOpResult result;
@@ -894,8 +898,8 @@ namespace mongo {
             *upsertedId = result.getStats().upsertedID;
         }
         // END CURRENT OP
-        incWriteStats( updateItem, result.getStats(), result.getError(), currentOp.get() );
-        finishCurrentOp( _txn, currentOp.get(), result.getError() );
+        incWriteStats( updateItem, result.getStats(), result.getError(), &currentOp );
+        finishCurrentOp( _txn, &currentOp, result.getError() );
 
         // End current transaction and release snapshot.
         _txn->recoveryUnit()->commitAndRestart();
@@ -912,7 +916,8 @@ namespace mongo {
         // Removes are similar to updates, but page faults are handled externally
 
         // BEGIN CURRENT OP
-        scoped_ptr<CurOp> currentOp( beginCurrentOp( _txn->getClient(), removeItem ) );
+        CurOp currentOp( _txn->getClient(), _txn->getClient()->curop() );
+        beginCurrentOp( &currentOp, _txn->getClient(), removeItem );
         incOpStats( removeItem );
 
         WriteOpResult result;
@@ -920,8 +925,8 @@ namespace mongo {
         multiRemove( _txn, removeItem, &result );
 
         // END CURRENT OP
-        incWriteStats( removeItem, result.getStats(), result.getError(), currentOp.get() );
-        finishCurrentOp( _txn, currentOp.get(), result.getError() );
+        incWriteStats( removeItem, result.getStats(), result.getError(), &currentOp );
+        finishCurrentOp( _txn, &currentOp, result.getError() );
 
         // End current transaction and release snapshot.
         _txn->recoveryUnit()->commitAndRestart();
@@ -958,7 +963,7 @@ namespace mongo {
             intentLock = false; // can't build indexes in intent mode
 
         invariant(!_context.get());
-        const NamespaceString nss(request->getNS());
+        const NamespaceString& nss = request->getNSS();
         _collLock.reset(); // give up locks if any
         _writeLock.reset();
         _writeLock.reset(new Lock::DBLock(txn->lockState(),
@@ -973,9 +978,9 @@ namespace mongo {
             intentLock = false;
         }
         _collLock.reset(new Lock::CollectionLock(txn->lockState(),
-                                                 request->getNS(),
+                                                 nss.ns(),
                                                  intentLock ? MODE_IX : MODE_X));
-        if (!checkIsMasterForDatabase(request->getNS(), result)) {
+        if (!checkIsMasterForDatabase(nss, result)) {
             return false;
         }
         if (!checkShardVersion(txn, &shardingState, *request, result)) {
@@ -986,7 +991,7 @@ namespace mongo {
         }
 
         _context.reset();
-        _context.reset(new Client::Context(txn, request->getNS(), false));
+        _context.reset(new Client::Context(txn, nss, false));
 
         Database* database = _context->db();
         dassert(database);
@@ -1070,7 +1075,8 @@ namespace mongo {
 
     void WriteBatchExecutor::execOneInsert(ExecInsertsState* state, WriteErrorDetail** error) {
         BatchItemRef currInsertItem(state->request, state->currIndex);
-        scoped_ptr<CurOp> currentOp(beginCurrentOp(_txn->getClient(), currInsertItem));
+        CurOp currentOp( _txn->getClient(), _txn->getClient()->curop() );
+        beginCurrentOp( &currentOp, _txn->getClient(), currInsertItem );
         incOpStats(currInsertItem);
 
         WriteOpResult result;
@@ -1079,8 +1085,8 @@ namespace mongo {
         incWriteStats(currInsertItem,
                       result.getStats(),
                       result.getError(),
-                      currentOp.get());
-        finishCurrentOp(_txn, currentOp.get(), result.getError());
+                      &currentOp);
+        finishCurrentOp(_txn, &currentOp, result.getError());
 
         if (result.getError()) {
             *error = result.releaseError();
@@ -1099,8 +1105,7 @@ namespace mongo {
                               WriteOpResult* result ) {
 
         const string& insertNS = collection->ns().ns();
-
-        txn->lockState()->assertWriteLocked( insertNS );
+        invariant(txn->lockState()->isCollectionLockedForMode(insertNS, MODE_IX));
 
         WriteUnitOfWork wunit(txn);
         StatusWith<RecordId> status = collection->insertDocument( txn, docToInsert, true );
@@ -1191,8 +1196,8 @@ namespace mongo {
         bool createCollection = false;
         for ( int fakeLoop = 0; fakeLoop < 1; fakeLoop++ ) {
 
-            UpdateExecutor executor(txn, &request, &txn->getCurOp()->debug());
-            Status status = executor.prepare();
+            ParsedUpdate parsedUpdate(txn, &request);
+            Status status = parsedUpdate.parseRequest();
             if (!status.isOK()) {
                 result->setError(toWriteError(status));
                 return;
@@ -1251,8 +1256,9 @@ namespace mongo {
             }
 
             Client::Context ctx(txn, nsString.ns(), false /* don't check version */);
+            Collection* collection = db->getCollection(txn, nsString.ns());
 
-            if ( db->getCollection( txn, nsString.ns() ) == NULL ) {
+            if ( collection == NULL ) {
                 if ( createCollection ) {
                     // we raced with some, accept defeat
                     result->getStats().nModified = 0;
@@ -1274,7 +1280,14 @@ namespace mongo {
             }
 
             try {
-                UpdateResult res = executor.execute(ctx.db());
+                OpDebug* debug = &txn->getCurOp()->debug();
+                invariant(collection);
+                PlanExecutor* rawExec;
+                uassertStatusOK(getExecutorUpdate(txn, collection, &parsedUpdate, debug, &rawExec));
+                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+
+                uassertStatusOK(exec->executePlan());
+                UpdateResult res = UpdateStage::makeUpdateResult(exec.get(), debug);
 
                 const long long numDocsModified = res.numDocsModified;
                 const long long numMatched = res.numMatched;
@@ -1293,12 +1306,12 @@ namespace mongo {
                     throw;
                 }
 
-                WriteConflictException::logAndBackoff( attempt++, "update", nsString.ns() );
-
                 createCollection = false;
                 // RESTART LOOP
                 fakeLoop = -1;
                 txn->recoveryUnit()->commitAndRestart();
+
+                WriteConflictException::logAndBackoff( attempt++, "update", nsString.ns() );
             }
             catch (const DBException& ex) {
                 Status status = ex.toStatus();
@@ -1320,7 +1333,7 @@ namespace mongo {
                              const BatchItemRef& removeItem,
                              WriteOpResult* result ) {
 
-        const NamespaceString nss( removeItem.getRequest()->getNS() );
+        const NamespaceString& nss = removeItem.getRequest()->getNSS();
         DeleteRequest request(nss);
         request.setQuery( removeItem.getDelete()->getQuery() );
         request.setMulti( removeItem.getDelete()->getLimit() != 1 );
@@ -1334,15 +1347,18 @@ namespace mongo {
         while ( 1 ) {
             try {
 
-                DeleteExecutor executor( txn, &request );
-                Status status = executor.prepare();
-                if ( !status.isOK() ) {
+                ParsedDelete parsedDelete(txn, &request);
+                Status status = parsedDelete.parseRequest();
+                if (!status.isOK()) {
                     result->setError(toWriteError(status));
                     return;
                 }
 
+                ScopedTransaction scopedXact(txn, MODE_IX);
                 AutoGetDb autoDb(txn, nss.db(), MODE_IX);
-                if (!autoDb.getDb()) break;
+                if (!autoDb.getDb()) {
+                    break;
+                }
 
                 Lock::CollectionLock collLock(txn->lockState(), nss.ns(), MODE_IX);
 
@@ -1357,7 +1373,16 @@ namespace mongo {
                 // TODO: better constructor?
                 Client::Context ctx(txn, nss.ns(), false /* don't check version */);
 
-                result->getStats().n = executor.execute(autoDb.getDb());
+                PlanExecutor* rawExec;
+                uassertStatusOK(getExecutorDelete(txn,
+                                                  ctx.db()->getCollection(txn, nss),
+                                                  &parsedDelete,
+                                                  &rawExec));
+                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+
+                // Execute the delete and retrieve the number deleted.
+                uassertStatusOK(exec->executePlan());
+                result->getStats().n = DeleteStage::getNumDeleted(exec.get());
 
                 break;
             }

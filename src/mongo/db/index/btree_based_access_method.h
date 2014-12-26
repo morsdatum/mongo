@@ -105,6 +105,8 @@ namespace mongo {
         virtual Status validate(OperationContext* txn, bool full, int64_t* numKeys,
                                 BSONObjBuilder* output);
 
+        virtual bool appendCustomStats(OperationContext* txn, BSONObjBuilder* output, double scale)
+            const;
         virtual long long getSpaceUsedBytes( OperationContext* txn ) const;
 
         // XXX: consider migrating callers to use IndexCursor instead
@@ -128,6 +130,9 @@ namespace mongo {
         class BtreeBasedPrivateUpdateData;
 
         virtual void getKeys(const BSONObj &obj, BSONObjSet *keys) = 0;
+
+        // Determines whether it's OK to ignore ErrorCodes::KeyTooLong for this OperationContext
+        bool ignoreKeyTooLong(OperationContext* txn);
 
         IndexCatalogEntry* _btreeState; // owned by IndexCatalogEntry
         const IndexDescriptor* _descriptor;

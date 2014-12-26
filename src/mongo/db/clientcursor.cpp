@@ -69,49 +69,54 @@ namespace mongo {
         return cursorStatsOpen.get();
     }
 
-    ClientCursor::ClientCursor(const Collection* collection, PlanExecutor* exec,
-                               int qopts, const BSONObj query)
-        : _collection( collection ),
-          _countedYet( false ),
+    ClientCursor::ClientCursor(CursorManager* cursorManager,
+                               PlanExecutor* exec,
+                               int qopts,
+                               const BSONObj query,
+                               bool isAggCursor)
+        : _cursorManager(cursorManager),
+          _countedYet(false),
+          _isAggCursor(isAggCursor),
           _unownedRU(NULL) {
 
         _exec.reset(exec);
         _ns = exec->ns();
         _query = query;
         _queryOptions = qopts;
-        if ( exec->collection() ) {
-            invariant( collection == exec->collection() );
+        if (exec->collection()) {
+            invariant(cursorManager == exec->collection()->cursorManager());
         }
         init();
     }
 
-    ClientCursor::ClientCursor(const Collection* collection)
-        : _ns(collection->ns().ns()),
-          _collection(collection),
-          _countedYet( false ),
+    ClientCursor::ClientCursor(CursorManager* cursorManager)
+        : _ns(cursorManager->ns()),
+          _cursorManager(cursorManager),
+          _countedYet(false),
           _queryOptions(QueryOption_NoCursorTimeout),
+          _isAggCursor(false),
           _unownedRU(NULL) {
         init();
     }
 
     void ClientCursor::init() {
-        invariant( _collection );
+        invariant( _cursorManager );
 
-        isAggCursor = false;
+        _isPinned = false;
+        _isNoTimeout = false;
 
         _idleAgeMillis = 0;
         _leftoverMaxTimeMicros = 0;
-        _pinValue = 0;
         _pos = 0;
 
         if (_queryOptions & QueryOption_NoCursorTimeout) {
             // cursors normally timeout after an inactivity period to prevent excess memory use
             // setting this prevents timeout of the cursor in question.
-            ++_pinValue;
+            _isNoTimeout = true;
             cursorStatsOpenNoTimeout.increment();
         }
 
-        _cursorid = _collection->cursorCache()->registerCursor( this );
+        _cursorid = _cursorManager->registerCursor( this );
 
         cursorStatsOpen.increment();
         _countedYet = true;
@@ -124,30 +129,32 @@ namespace mongo {
             return;
         }
 
+        invariant( !_isPinned ); // Must call unsetPinned() before invoking destructor.
+
         if ( _countedYet ) {
             _countedYet = false;
             cursorStatsOpen.decrement();
-            if ( _pinValue == 1 )
+            if ( _isNoTimeout )
                 cursorStatsOpenNoTimeout.decrement();
         }
 
-        if ( _collection ) {
+        if ( _cursorManager ) {
             // this could be null if kill() was killed
-            _collection->cursorCache()->deregisterCursor( this );
+            _cursorManager->deregisterCursor( this );
         }
 
         // defensive:
-        _collection = NULL;
+        _cursorManager = NULL;
         _cursorid = INVALID_CURSOR_ID;
         _pos = -2;
-        _pinValue = 0;
+        _isNoTimeout = false;
     }
 
     void ClientCursor::kill() {
         if ( _exec.get() )
             _exec->kill();
 
-        _collection = NULL;
+        _cursorManager = NULL;
     }
 
     //
@@ -156,7 +163,10 @@ namespace mongo {
 
     bool ClientCursor::shouldTimeout(int millis) {
         _idleAgeMillis += millis;
-        return _idleAgeMillis > 600000 && _pinValue == 0;
+        if (_isNoTimeout || _isPinned) {
+            return false;
+        }
+        return _idleAgeMillis > 600000;
     }
 
     void ClientCursor::setIdleTime( int millis ) {
@@ -175,7 +185,7 @@ namespace mongo {
         if (!rid.isSet())
             return;
 
-        repl::getGlobalReplicationCoordinator()->setLastOptimeForSlave(txn, rid, _slaveReadTill);
+        repl::getGlobalReplicationCoordinator()->setLastOptimeForSlave(rid, _slaveReadTill);
     }
 
     //
@@ -208,10 +218,10 @@ namespace mongo {
     // deleted from underneath us, so we can save the pointer and ignore the ID.
     //
 
-    ClientCursorPin::ClientCursorPin( const Collection* collection, long long cursorid )
+    ClientCursorPin::ClientCursorPin( CursorManager* cursorManager, long long cursorid )
         : _cursor( NULL ) {
         cursorStatsOpenPinned.increment();
-        _cursor = collection->cursorCache()->find( cursorid, true );
+        _cursor = cursorManager->find( cursorid, true );
     }
 
     ClientCursorPin::~ClientCursorPin() {
@@ -223,20 +233,33 @@ namespace mongo {
         if ( !_cursor )
             return;
 
-        invariant( _cursor->pinValue() >= 100 );
+        invariant( _cursor->isPinned() );
 
-        if ( _cursor->collection() == NULL ) {
-            // the ClientCursor was killed while we had it
-            // therefore its our responsibility to kill it
-            delete _cursor;
-            _cursor = NULL; // defensive
+        if ( _cursor->cursorManager() == NULL ) {
+            // The ClientCursor was killed while we had it.  Therefore, it is our responsibility to
+            // kill it.
+            deleteUnderlying();
         }
         else {
-            _cursor->collection()->cursorCache()->unpin( _cursor );
+            // Unpin the cursor under the collection cursor manager lock.
+            _cursor->cursorManager()->unpin( _cursor );
         }
     }
 
     void ClientCursorPin::deleteUnderlying() {
+        invariant( _cursor->isPinned() );
+        // Note the following subtleties of this method's implementation:
+        // - We must unpin the cursor before destruction, since it is an error to destroy a pinned
+        //   cursor.
+        // - In addition, we must deregister the cursor before unpinning, since it is an
+        //   error to unpin a registered cursor without holding the cursor manager lock (note that
+        //   we can't simply unpin with the cursor manager lock here, since we need to guarantee
+        //   exclusive ownership of the cursor when we are deleting it).
+        if ( _cursor->cursorManager() ) {
+            _cursor->cursorManager()->deregisterCursor( _cursor );
+            _cursor->kill();
+        }
+        _cursor->unsetPinned();
         delete _cursor;
         _cursor = NULL;
     }
@@ -264,7 +287,7 @@ namespace mongo {
             while (!inShutdown()) {
                 OperationContextImpl txn;
                 cursorStatsTimedOut.increment(
-                    CollectionCursorCache::timeoutCursorsGlobal(&txn, t.millisReset()));
+                    CursorManager::timeoutCursorsGlobal(&txn, t.millisReset()));
                 sleepsecs(Secs);
             }
             client.shutdown();

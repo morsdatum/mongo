@@ -37,6 +37,7 @@
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/ops/update_lifecycle.h"
+#include "mongo/db/query/explain.h"
 #include "mongo/db/repl/repl_coordinator_global.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/util/log.h"
@@ -50,14 +51,14 @@ namespace mongo {
         const char idFieldName[] = "_id";
         const FieldRef idFieldRef(idFieldName);
 
-        Status storageValid(const mb::Document&, const bool);
-        Status storageValid(const mb::ConstElement&, const bool);
-        Status storageValidChildren(const mb::ConstElement&, const bool);
+        Status storageValid(const mb::Document&, const bool = true);
+        Status storageValid(const mb::ConstElement&, const bool = true);
+        Status storageValidChildren(const mb::ConstElement&, const bool = true);
 
         /**
          * mutable::document storageValid check -- like BSONObj::_okForStorage
          */
-        Status storageValid(const mb::Document& doc, const bool deep = true) {
+        Status storageValid(const mb::Document& doc, const bool deep) {
             mb::ConstElement currElem = doc.root().leftChild();
             while (currElem.ok()) {
                 if (currElem.getFieldName() == idFieldName) {
@@ -89,7 +90,7 @@ namespace mongo {
         Status validateDollarPrefixElement(const mb::ConstElement elem, const bool deep) {
             mb::ConstElement curr = elem;
             StringData currName = elem.getFieldName();
-
+            LOG(5) << "validateDollarPrefixElement -- validating field '" << currName << "'";
             // Found a $db field
             if (currName == "$db") {
                 if (curr.getType() != String) {
@@ -146,7 +147,28 @@ namespace mongo {
             return Status::OK();
         }
 
-        Status storageValid(const mb::ConstElement& elem, const bool deep = true) {
+        /**
+         * Checks that all parents, of the element passed in, are valid for storage
+         *
+         * Note: The elem argument must be in a valid state when using this function
+         */
+        Status storageValidParents(const mb::ConstElement& elem) {
+            const mb::ConstElement& root = elem.getDocument().root();
+            if (elem != root) {
+                const mb::ConstElement& parent = elem.parent();
+                if (parent.ok() && parent != root) {
+                    Status s = storageValid(parent, false);
+                    if (s.isOK()) {
+                        s = storageValidParents(parent);
+                    }
+
+                    return s;
+                }
+            }
+            return Status::OK();
+        }
+
+        Status storageValid(const mb::ConstElement& elem, const bool deep) {
             if (!elem.ok())
                 return Status(ErrorCodes::BadValue, "Invalid elements cannot be stored.");
 
@@ -156,8 +178,8 @@ namespace mongo {
             // TODO: Revisit how mutable handles array field names. We going to need to make
             // this better if we ever want to support ordered updates that can alter the same
             // element repeatedly; see SERVER-12848.
-            const bool childOfArray = elem.parent().ok() ?
-                (elem.parent().getType() == mongo::Array) : false;
+            const mb::ConstElement& parent = elem.parent();
+            const bool childOfArray = parent.ok() ? (parent.getType() == mongo::Array) : false;
 
             if (!childOfArray) {
                 StringData fieldName = elem.getFieldName();
@@ -177,10 +199,12 @@ namespace mongo {
                 }
             }
 
-            // Check children if there are any.
-            Status s = storageValidChildren(elem, deep);
-            if (!s.isOK())
-                return s;
+            if (deep) {
+                // Check children if there are any.
+                Status s = storageValidChildren(elem, deep);
+                if (!s.isOK())
+                    return s;
+            }
 
             return Status::OK();
         }
@@ -261,9 +285,17 @@ namespace mongo {
 
                     // newElem might be missing if $unset/$renamed-away
                     if (newElem.ok()) {
+
+                        // Check element, and its children
                         Status s = storageValid(newElem, true);
                         if (!s.isOK())
                             return s;
+
+                        // Check parents to make sure they are valid as well.
+                        s = storageValidParents(newElem);
+                        if (!s.isOK())
+                            return s;
+
                     }
                     // Check if the updated field conflicts with immutable fields
                     immutableFieldRef.findConflicts(&current, &changedImmutableFields);
@@ -408,6 +440,10 @@ namespace mongo {
           _doc(params.driver->getDocument()) {
         // We are an update until we fall into the insert case.
         params.driver->setContext(ModifierInterface::ExecInfo::UPDATE_CONTEXT);
+
+        // Before we even start executing, we know whether or not this is a replacement
+        // style or $mod style update.
+        _specificStats.isDocReplacement = params.driver->isDocReplacement();
     }
 
     void UpdateStage::transformAndUpdate(BSONObj& oldObj, RecordId& loc) {
@@ -884,5 +920,43 @@ namespace mongo {
     const SpecificStats* UpdateStage::getSpecificStats() {
         return &_specificStats;
     }
+
+    // static
+    UpdateResult UpdateStage::makeUpdateResult(PlanExecutor* exec, OpDebug* opDebug) {
+        // Get stats from the root stage.
+        invariant(exec->getRootStage()->isEOF());
+        invariant(exec->getRootStage()->stageType() == STAGE_UPDATE);
+        UpdateStage* updateStage = static_cast<UpdateStage*>(exec->getRootStage());
+        const UpdateStats* updateStats =
+            static_cast<const UpdateStats*>(updateStage->getSpecificStats());
+
+        // Use stats from the root stage to fill out opDebug.
+        opDebug->nMatched = updateStats->nMatched;
+        opDebug->nModified = updateStats->nModified;
+        opDebug->upsert = updateStats->inserted;
+        opDebug->fastmodinsert = updateStats->fastmodinsert;
+        opDebug->fastmod = updateStats->fastmod;
+
+        // Historically, 'opDebug' considers 'nMatched' and 'nModified' to be 1 (rather than 0)
+        // if there is an upsert that inserts a document. The UpdateStage does not participate
+        // in this madness in order to have saner stats reporting for explain. This means that
+        // we have to set these values "manually" in the case of an insert.
+        if (updateStats->inserted) {
+            opDebug->nMatched = 1;
+            opDebug->nModified = 1;
+        }
+
+        // Get summary information about the plan.
+        PlanSummaryStats stats;
+        Explain::getSummaryStats(exec, &stats);
+        opDebug->nscanned = stats.totalKeysExamined;
+        opDebug->nscannedObjects = stats.totalDocsExamined;
+
+        return UpdateResult(updateStats->nMatched > 0 /* Did we update at least one obj? */,
+                            !updateStats->isDocReplacement /* $mod or obj replacement */,
+                            opDebug->nModified /* number of modified docs, no no-ops */,
+                            opDebug->nMatched /* # of docs matched/updated, even no-ops */,
+                            updateStats->objInserted);
+    };
 
 } // namespace mongo

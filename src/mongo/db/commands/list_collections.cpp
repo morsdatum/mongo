@@ -31,11 +31,17 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/catalog/collection_catalog_entry.h"
+#include "mongo/db/catalog/cursor_manager.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/catalog/database_catalog_entry.h"
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/client.h"
+#include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
+#include "mongo/db/exec/mock_stage.h"
+#include "mongo/db/exec/working_set.h"
+#include "mongo/db/global_environment_experiment.h"
+#include "mongo/db/query/find_constants.h"
 #include "mongo/db/storage/storage_engine.h"
 
 namespace mongo {
@@ -67,6 +73,7 @@ namespace mongo {
                  BSONObjBuilder& result,
                  bool /*fromRepl*/) {
 
+            ScopedTransaction scopedXact(txn, MODE_IS);
             AutoGetDb autoDb(txn, dbname, MODE_S);
 
             const Database* d = autoDb.getDb();
@@ -89,9 +96,10 @@ namespace mongo {
                 matcher.reset( parsed.getValue() );
             }
 
-            BSONArrayBuilder arr;
+            std::auto_ptr<WorkingSet> ws(new WorkingSet());
+            std::auto_ptr<MockStage> root(new MockStage(ws.get()));
 
-            for ( list<string>::const_iterator i = names.begin(); i != names.end(); ++i ) {
+            for ( std::list<std::string>::const_iterator i = names.begin(); i != names.end(); ++i ) {
                 string ns = *i;
 
                 StringData collection = nsToCollectionSubstring( ns );
@@ -111,10 +119,63 @@ namespace mongo {
                     continue;
                 }
 
-                arr.append( maybe );
+                WorkingSetID wsId = ws->allocate();
+                WorkingSetMember* member = ws->get(wsId);
+                member->state = WorkingSetMember::OWNED_OBJ;
+                member->keyData.clear();
+                member->loc = RecordId();
+                member->obj = maybe;
+                root->pushBack(*member);
             }
 
-            result.append( "collections", arr.arr() );
+            std::string cursorNamespace = str::stream() << dbname << ".$cmd." << name;
+
+            PlanExecutor* rawExec;
+            Status makeStatus = PlanExecutor::make(txn,
+                                                   ws.release(),
+                                                   root.release(),
+                                                   cursorNamespace,
+                                                   PlanExecutor::YIELD_MANUAL,
+                                                   &rawExec);
+            std::auto_ptr<PlanExecutor> exec(rawExec);
+            if (!makeStatus.isOK()) {
+                return appendCommandStatus( result, makeStatus );
+            }
+
+            BSONElement batchSizeElem = jsobj.getFieldDotted("cursor.batchSize");
+            const long long batchSize = batchSizeElem.isNumber()
+                                        ? batchSizeElem.numberLong()
+                                        : -1;
+
+            BSONArrayBuilder firstBatch;
+
+            const int byteLimit = MaxBytesToReturnToClientAtOnce;
+            for (int objCount = 0;
+                 firstBatch.len() < byteLimit && (batchSize == -1 || objCount < batchSize);
+                 objCount++) {
+                BSONObj next;
+                PlanExecutor::ExecState state = exec->getNext(&next, NULL);
+                if ( state == PlanExecutor::IS_EOF ) {
+                    break;
+                }
+                invariant( state == PlanExecutor::ADVANCED );
+                firstBatch.append(next);
+            }
+
+            CursorId cursorId = 0LL;
+            if ( !exec->isEOF() ) {
+                exec->saveState();
+                ClientCursor* cursor = new ClientCursor(CursorManager::getGlobalCursorManager(),
+                                                        exec.release());
+                cursorId = cursor->cursorid();
+
+                cursor->setOwnedRecoveryUnit(txn->releaseRecoveryUnit());
+                StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
+                txn->setRecoveryUnit(storageEngine->newRecoveryUnit());
+            }
+
+            Command::appendCursorResponseObject( cursorId, cursorNamespace, firstBatch.arr(),
+                                                 &result );
 
             return true;
         }

@@ -804,14 +804,14 @@ function appendSetParameterArgs(argArray) {
                     argArray.push.apply(argArray, ['--storageEngine', jsTest.options().storageEngine]);
                 }
             }
-            if (jsTest.options().wiredTigerEngineConfig) {
-                argArray.push.apply(argArray, ['--wiredTigerEngineConfig', jsTest.options().wiredTigerEngineConfig]);
+            if (jsTest.options().wiredTigerEngineConfigString) {
+                argArray.push.apply(argArray, ['--wiredTigerEngineConfigString', jsTest.options().wiredTigerEngineConfigString]);
             }
-            if (jsTest.options().wiredTigerCollectionConfig) {
-                argArray.push.apply(argArray, ['--wiredTigerCollectionConfig', jsTest.options().wiredTigerCollectionConfig]);
+            if (jsTest.options().wiredTigerCollectionConfigString) {
+                argArray.push.apply(argArray, ['--wiredTigerCollectionConfigString', jsTest.options().wiredTigerCollectionConfigString]);
             }
-            if (jsTest.options().wiredTigerIndexConfig) {
-                argArray.push.apply(argArray, ['--wiredTigerIndexConfig', jsTest.options().wiredTigerIndexConfig]);
+            if (jsTest.options().wiredTigerIndexConfigString) {
+                argArray.push.apply(argArray, ['--wiredTigerIndexConfigString', jsTest.options().wiredTigerIndexConfigString]);
             }
             // apply setParameters for mongod
             if (jsTest.options().setParameters) {
@@ -909,7 +909,6 @@ runMongoProgram = function() {
         args.unshift( progName,
                       '-u', jsTestOptions().authUser,
                       '-p', jsTestOptions().authPassword,
-                      '--authenticationMechanism', DB.prototype._defaultAuthenticationMechanism,
                       '--authenticationDatabase=admin'
                     );
     }
@@ -935,7 +934,6 @@ startMongoProgramNoConnect = function() {
         args.unshift(progName,
                      '-u', jsTestOptions().authUser,
                      '-p', jsTestOptions().authPassword,
-                     '--authenticationMechanism', DB.prototype._defaultAuthenticationMechanism,
                      '--authenticationDatabase=admin');
     }
 

@@ -44,7 +44,6 @@
 #include "mongo/db/catalog/index_create.h"
 #include "mongo/db/index/index_access_method.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/storage/mmap_v1/record_store_v1_capped.h"  // XXX-HK/ERH
 #include "mongo/db/storage/mmap_v1/mmap_v1_options.h"
 #include "mongo/db/storage/record_fetcher.h"
 #include "mongo/db/repl/repl_coordinator_global.h"
@@ -88,7 +87,7 @@ namespace mongo {
           _database( database ),
           _infoCache( this ),
           _indexCatalog( this ),
-          _cursorCache( fullNS ) {
+          _cursorManager( fullNS ) {
         _magic = 1357924;
         _indexCatalog.init(txn);
         if ( isCapped() )
@@ -253,7 +252,7 @@ namespace mongo {
         BSONObj doc = docFor( txn, loc );
 
         /* check if any cursors point to us.  if so, advance them. */
-        _cursorCache.invalidateDocument(txn, loc, INVALIDATION_DELETION);
+        _cursorManager.invalidateDocument(txn, loc, INVALIDATION_DELETION);
 
         _indexCatalog.unindexRecord(txn, doc, loc, false);
 
@@ -281,7 +280,7 @@ namespace mongo {
         }
 
         /* check if any cursors point to us.  if so, advance them. */
-        _cursorCache.invalidateDocument(txn, loc, INVALIDATION_DELETION);
+        _cursorManager.invalidateDocument(txn, loc, INVALIDATION_DELETION);
 
         _indexCatalog.unindexRecord(txn, doc, loc, noWarn);
 
@@ -390,7 +389,7 @@ namespace mongo {
         }
 
         // Broadcast the mutation so that query results stay correct.
-        _cursorCache.invalidateDocument(txn, oldLocation, INVALIDATION_MUTATION);
+        _cursorManager.invalidateDocument(txn, oldLocation, INVALIDATION_MUTATION);
 
         return newLocation;
     }
@@ -400,7 +399,7 @@ namespace mongo {
                                                const char* oldBuffer,
                                                size_t oldSize ) {
         moveCounter.increment();
-        _cursorCache.invalidateDocument(txn, oldLocation, INVALIDATION_DELETION);
+        _cursorManager.invalidateDocument(txn, oldLocation, INVALIDATION_DELETION);
         _indexCatalog.unindexRecord(txn, BSONObj(oldBuffer), oldLocation, true);
         return Status::OK();
     }
@@ -413,7 +412,7 @@ namespace mongo {
                                                   const mutablebson::DamageVector& damages ) {
 
         // Broadcast the mutation so that query results stay correct.
-        _cursorCache.invalidateDocument(txn, loc, INVALIDATION_MUTATION);
+        _cursorManager.invalidateDocument(txn, loc, INVALIDATION_MUTATION);
 
         return _recordStore->updateWithDamages( txn, loc, oldRec, damageSource, damages );
     }
@@ -495,7 +494,7 @@ namespace mongo {
         Status status = _indexCatalog.dropAllIndexes(txn, true);
         if ( !status.isOK() )
             return status;
-        _cursorCache.invalidateAll( false );
+        _cursorManager.invalidateAll( false );
         _infoCache.reset( txn );
 
         // 3) truncate record store
@@ -517,8 +516,7 @@ namespace mongo {
                                               RecordId end,
                                               bool inclusive) {
         invariant( isCapped() );
-        reinterpret_cast<CappedRecordStoreV1*>(
-                           _recordStore)->temp_cappedTruncateAfter( txn, end, inclusive );
+        _recordStore->temp_cappedTruncateAfter( txn, end, inclusive );
     }
 
     namespace {

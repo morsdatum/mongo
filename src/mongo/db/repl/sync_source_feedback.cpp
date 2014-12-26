@@ -112,7 +112,7 @@ namespace repl {
         }
         // construct a vector of handshake obj for us as well as all chained members
         std::vector<BSONObj> handshakeObjs;
-        replCoord->prepareReplSetUpdatePositionCommandHandshakes(txn, &handshakeObjs);
+        replCoord->prepareReplSetUpdatePositionCommandHandshakes(&handshakeObjs);
         LOG(1) << "handshaking upstream updater";
         for (std::vector<BSONObj>::iterator it = handshakeObjs.begin();
                 it != handshakeObjs.end();
@@ -205,7 +205,7 @@ namespace repl {
                 return Status(ErrorCodes::NodeNotFound,
                               "Need to send handshake before updating position upstream");
             }
-            replCoord->prepareReplSetUpdatePositionCommand(txn, &cmd);
+            replCoord->prepareReplSetUpdatePositionCommand(&cmd);
         }
         BSONObj res;
 
@@ -215,6 +215,10 @@ namespace repl {
         }
         catch (const DBException& e) {
             log() << "SyncSourceFeedback error sending update: " << e.what() << endl;
+            // blacklist sync target for .5 seconds and find a new one
+            replCoord->blacklistSyncSource(_syncTarget,
+                                           Date_t(curTimeMillis64() + 500));
+            BackgroundSync::get()->clearSyncTarget();
             _resetConnection();
             return e.toStatus();
         }
@@ -222,6 +226,10 @@ namespace repl {
         Status status = Command::getStatusFromCommandResult(res);
         if (!status.isOK()) {
             log() << "SyncSourceFeedback error sending update, response: " << res.toString() <<endl;
+            // blacklist sync target for .5 seconds and find a new one
+            replCoord->blacklistSyncSource(_syncTarget,
+                                           Date_t(curTimeMillis64() + 500));
+            BackgroundSync::get()->clearSyncTarget();
             _resetConnection();
         }
         return status;

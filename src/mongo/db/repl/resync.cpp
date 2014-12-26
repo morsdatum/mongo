@@ -27,6 +27,7 @@
 */
 
 #include "mongo/db/commands.h"
+#include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/repl/bgsync.h"
 #include "mongo/db/repl/master_slave.h"  // replSettings
 #include "mongo/db/repl/repl_coordinator_global.h"
@@ -71,11 +72,12 @@ namespace repl {
 
             ReplicationCoordinator* replCoord = getGlobalReplicationCoordinator();
             if (getGlobalReplicationCoordinator()->getSettings().usingReplSets()) {
-                if (replCoord->getReplicationMode() != ReplicationCoordinator::modeReplSet) {
+                const MemberState memberState = replCoord->getCurrentMemberState();
+                if (memberState.startup()) {
                     return appendCommandStatus(result, Status(ErrorCodes::NotYetInitialized,
                                                               "no replication yet active"));
                 }
-                if (replCoord->getCurrentMemberState().primary() ||
+                if (memberState.primary() ||
                         !replCoord->setFollowerMode(MemberState::RS_STARTUP2)) {
                     return appendCommandStatus(result, Status(ErrorCodes::NotSecondary,
                                                               "primaries cannot resync"));

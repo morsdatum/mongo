@@ -226,8 +226,6 @@ add_option( "extrapath", "comma separated list of add'l paths  (--extrapath /opt
 add_option( "extrapathdyn", "comma separated list of add'l paths  (--extrapath /opt/foo/,/foo) dynamic linking" , 1 , False )
 add_option( "extralib", "comma separated list of libraries  (--extralib js_static,readline" , 1 , False )
 
-add_option( "no-glibc-check" , "don't check for new versions of glibc" , 0 , False )
-
 # experimental features
 add_option( "mm", "use main memory instead of memory mapped files" , 0 , True )
 add_option( "ssl" , "Enable SSL" , 0 , True )
@@ -1129,17 +1127,14 @@ def doConfigure(myenv):
         }
         """ % compiler_minimum_string)
     elif using_gcc():
-        # TODO: Really, we want GCC 4.8.2 here, but we are admitting 4.8.1
-        # until our Solaris toolchain solution reaches 4.8.2. When our Solaris
-        # toolchain reaches 4.8.2, upgrade this string, and the check below.
-        compiler_minimum_string = "GCC 4.8.1"
+        compiler_minimum_string = "GCC 4.8.2"
         compiler_test_body = textwrap.dedent(
         """
         #if !defined(__GNUC__) || defined(__clang__)
         #error
         #endif
 
-        #if (__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 8) || (__GNUC__ == 4 && __GNUC_MINOR__ == 8 && __GNUC_PATCHLEVEL__ < 1)
+        #if (__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 8) || (__GNUC__ == 4 && __GNUC_MINOR__ == 8 && __GNUC_PATCHLEVEL__ < 2)
         #error %s or newer is required to build MongoDB
         #endif
 
@@ -2049,8 +2044,6 @@ env = doConfigure( env )
 
 env['PDB'] = '${TARGET.base}.pdb'
 
-enforce_glibc = linux and releaseBuild and not has_option("no-glibc-check")
-
 def checkErrorCodes():
     import buildscripts.errorcodes as x
     if x.checkErrorCodes() == False:
@@ -2229,7 +2222,6 @@ env.AlwaysBuild( "s3shell" )
 def s3dist( env , target , source ):
     s3push( str(source[0]) , "mongodb" )
 
-env.Alias( "dist" , '$SERVER_ARCHIVE' )
 env.AlwaysBuild(env.Alias( "s3dist" , [ '$SERVER_ARCHIVE' ] , [ s3dist ] ))
 
 # --- an uninstall target ---
@@ -2260,7 +2252,6 @@ Export("boostSuffix")
 Export("darwin windows solaris linux freebsd nix openbsd")
 Export('module_sconscripts')
 Export("debugBuild optBuild")
-Export("enforce_glibc")
 Export("s3push")
 Export("use_clang")
 Export("wiredtiger")

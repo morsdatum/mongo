@@ -68,6 +68,7 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/query/query_planner.h"
+#include "mongo/db/repair_database.h"
 #include "mongo/db/repl/repl_coordinator_global.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/oplog.h"
@@ -100,21 +101,18 @@ namespace mongo {
     bool CmdShutdown::run(OperationContext* txn, const string& dbname, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool fromRepl) {
         bool force = cmdObj.hasField("force") && cmdObj["force"].trueValue();
 
-        repl::ReplicationCoordinator* replCoord = repl::getGlobalReplicationCoordinator();
-        if (replCoord->getReplicationMode() == repl::ReplicationCoordinator::modeReplSet) {
-            long long timeoutSecs = 0;
-            if (cmdObj.hasField("timeoutSecs")) {
-                timeoutSecs = cmdObj["timeoutSecs"].numberLong();
-            }
+        long long timeoutSecs = 0;
+        if (cmdObj.hasField("timeoutSecs")) {
+            timeoutSecs = cmdObj["timeoutSecs"].numberLong();
+        }
 
-            Status status = repl::getGlobalReplicationCoordinator()->stepDown(
-                    txn,
-                    force,
-                    repl::ReplicationCoordinator::Milliseconds(timeoutSecs * 1000),
-                    repl::ReplicationCoordinator::Milliseconds(120 * 1000));
-            if (!status.isOK() && status.code() != ErrorCodes::NotMaster) { // ignore not master
-                return appendCommandStatus(result, status);
-            }
+        Status status = repl::getGlobalReplicationCoordinator()->stepDown(
+                txn,
+                force,
+                repl::ReplicationCoordinator::Milliseconds(timeoutSecs * 1000),
+                repl::ReplicationCoordinator::Milliseconds(120 * 1000));
+        if (!status.isOK() && status.code() != ErrorCodes::NotMaster) { // ignore not master
+            return appendCommandStatus(result, status);
         }
 
         shutdownHelper();
@@ -141,24 +139,24 @@ namespace mongo {
         virtual bool isWriteCommandForConfigServer() const { return true; }
 
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
-                                                     Database* db, 
+                                                     Database* db,
                                                      const BSONObj& cmdObj) {
             invariant(db);
             std::list<std::string> collections;
             db->getDatabaseCatalogEntry()->getCollectionNamespaces(&collections);
 
             std::vector<BSONObj> allKilledIndexes;
-            for (std::list<std::string>::iterator it = collections.begin(); 
-                 it != collections.end(); 
+            for (std::list<std::string>::iterator it = collections.begin();
+                 it != collections.end();
                  ++it) {
                 std::string ns = *it;
 
                 IndexCatalog::IndexKillCriteria criteria;
                 criteria.ns = ns;
-                std::vector<BSONObj> killedIndexes = 
+                std::vector<BSONObj> killedIndexes =
                     IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, ns), criteria);
-                allKilledIndexes.insert(allKilledIndexes.end(), 
-                                        killedIndexes.begin(), 
+                allKilledIndexes.insert(allKilledIndexes.end(),
+                                        killedIndexes.begin(),
                                         killedIndexes.end());
             }
             return allKilledIndexes;
@@ -173,7 +171,7 @@ namespace mongo {
                 return false;
             }
 
-            if ((repl::getGlobalReplicationCoordinator()->getReplicationMode() != 
+            if ((repl::getGlobalReplicationCoordinator()->getReplicationMode() !=
                  repl::ReplicationCoordinator::modeNone) &&
                 (dbname == "local")) {
                 errmsg = "Cannot drop 'local' database while replication is active";
@@ -242,24 +240,24 @@ namespace mongo {
         }
 
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
-                                                     Database* db, 
+                                                     Database* db,
                                                      const BSONObj& cmdObj) {
             invariant(db);
             std::list<std::string> collections;
             db->getDatabaseCatalogEntry()->getCollectionNamespaces(&collections);
 
             std::vector<BSONObj> allKilledIndexes;
-            for (std::list<std::string>::iterator it = collections.begin(); 
-                 it != collections.end(); 
+            for (std::list<std::string>::iterator it = collections.begin();
+                 it != collections.end();
                  ++it) {
                 std::string ns = *it;
 
                 IndexCatalog::IndexKillCriteria criteria;
                 criteria.ns = ns;
-                std::vector<BSONObj> killedIndexes = 
+                std::vector<BSONObj> killedIndexes =
                     IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, ns), criteria);
-                allKilledIndexes.insert(allKilledIndexes.end(), 
-                                        killedIndexes.begin(), 
+                allKilledIndexes.insert(allKilledIndexes.end(),
+                                        killedIndexes.begin(),
                                         killedIndexes.end());
             }
             return allKilledIndexes;
@@ -285,8 +283,9 @@ namespace mongo {
             e = cmdObj.getField( "backupOriginalFiles" );
             bool backupOriginalFiles = e.isBoolean() && e.boolean();
 
-            Status status = getGlobalEnvironment()->getGlobalStorageEngine()->repairDatabase(
-                txn, dbname, preserveClonedFilesOnFailure, backupOriginalFiles );
+            StorageEngine* engine = getGlobalEnvironment()->getGlobalStorageEngine();
+            Status status = repairDatabase(txn, engine, dbname, preserveClonedFilesOnFailure,
+                                           backupOriginalFiles );
 
             IndexBuilder::restoreIndexes(indexesInProg);
 
@@ -395,7 +394,7 @@ namespace mongo {
         }
 
         bool run(OperationContext* txn, const string& dbname , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            const char* deprecationWarning = 
+            const char* deprecationWarning =
                 "CMD diagLogging is deprecated and will be removed in a future release";
             warning() << deprecationWarning << startupWarningsLog;
 
@@ -439,7 +438,7 @@ namespace mongo {
         virtual bool isWriteCommandForConfigServer() const { return true; }
 
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
-                                                     Database* db, 
+                                                     Database* db,
                                                      const BSONObj& cmdObj) {
             std::string nsToDrop = db->name() + '.' + cmdObj.firstElement().valuestrsafe();
 
@@ -465,8 +464,8 @@ namespace mongo {
                 return false;
             }
 
-            if ((repl::getGlobalReplicationCoordinator()->getReplicationMode() != 
-                 repl::ReplicationCoordinator::modeNone) && 
+            if ((repl::getGlobalReplicationCoordinator()->getReplicationMode() !=
+                 repl::ReplicationCoordinator::modeNone) &&
                 NamespaceString(nsToDrop).isOplog()) {
                 errmsg = "can't drop live oplog while replicating";
                 return false;
@@ -497,7 +496,7 @@ namespace mongo {
             if ( !s.isOK() ) {
                 return appendCommandStatus( result, s );
             }
-            
+
             if ( !fromRepl ) {
                 repl::logOp(txn, "c",(dbname + ".$cmd").c_str(), cmdObj);
             }
@@ -742,7 +741,7 @@ namespace mongo {
 
 
     class CmdDatasize : public Command {
-        virtual string parseNs(const string& dbname, const BSONObj& cmdObj) const { 
+        virtual string parseNs(const string& dbname, const BSONObj& cmdObj) const {
             return parseNsFullyQualified(dbname, cmdObj);
         }
     public:
@@ -939,13 +938,33 @@ namespace mongo {
             if( numRecords )
                 result.append( "avgObjSize" , collection->averageObjectSize(txn) );
 
-            result.appendNumber( "storageSize",
-                                 static_cast<long long>(collection->getRecordStore()->storageSize( txn, &result,
-                                                                                                   verbose ? 1 : 0 ) ) / 
-                                 scale );
-            result.append( "nindexes" , collection->getIndexCatalog()->numIndexesReady( txn ) );
+            result.appendNumber("storageSize",
+                                static_cast<long long>(collection->getRecordStore()
+                                                       ->storageSize(txn,
+                                                                     &result,
+                                                                     verbose ? 1 : 0)) / scale);
 
             collection->getRecordStore()->appendCustomStats( txn, &result, scale );
+
+            IndexCatalog* indexCatalog = collection->getIndexCatalog();
+            result.append( "nindexes" , indexCatalog->numIndexesReady( txn ) );
+
+            // indexes
+            BSONObjBuilder indexDetails;
+
+            IndexCatalog::IndexIterator i = indexCatalog->getIndexIterator(txn, false);
+            while (i.more()) {
+                const IndexDescriptor* descriptor = i.next();
+                IndexAccessMethod* iam = indexCatalog->getIndex(descriptor);
+                invariant(iam);
+
+                BSONObjBuilder bob;
+                if (iam->appendCustomStats(txn, &bob, scale)) {
+                    indexDetails.append(descriptor->indexName(), bob.obj());
+                }
+            }
+
+            result.append("indexDetails", indexDetails.done());
 
             BSONObjBuilder indexSizes;
             long long indexSize = collection->getIndexSize(txn, &indexSizes, scale);
@@ -967,7 +986,7 @@ namespace mongo {
         virtual bool slaveOk() const { return false; }
         virtual bool isWriteCommandForConfigServer() const { return true; }
         virtual void help( stringstream &help ) const {
-            help << 
+            help <<
                 "Sets collection options.\n"
                 "Example: { collMod: 'foo', usePowerOf2Sizes:true }\n"
                 "Example: { collMod: 'foo', index: {keyPattern: {a: 1}, expireAfterSeconds: 600} }";
@@ -1081,7 +1100,7 @@ namespace mongo {
             if (!ok) {
                 return false;
             }
-            
+
             if (!fromRepl) {
                 repl::logOp(txn, "c",(dbname + ".$cmd").c_str(), jsobj);
             }
@@ -1102,8 +1121,9 @@ namespace mongo {
         virtual bool slaveOk() const { return true; }
         virtual bool isWriteCommandForConfigServer() const { return false; }
         virtual void help( stringstream &help ) const {
-            help << 
-                "Get stats on a database. Not instantaneous. Slower for databases with large .ns files.\n" << 
+            help <<
+                "Get stats on a database. Not instantaneous. Slower for databases with large "
+                ".ns files.\n"
                 "Example: { dbStats:1, scale:1 }";
         }
 
@@ -1138,6 +1158,7 @@ namespace mongo {
             // We lock the entire database in S-mode in order to ensure that the contents will not
             // change for the stats snapshot. This might be unnecessary and if it becomes a
             // performance issue, we can take IS lock and then lock collection-by-collection.
+            ScopedTransaction scopedXact(txn, MODE_IS);
             AutoGetDb autoDb(txn, ns, MODE_S);
 
             result.append("db", ns);
@@ -1246,24 +1267,28 @@ namespace mongo {
         }
     }
 
-    /* Sometimes we cannot set maintenance mode, in which case the call to setMaintenanceMode will
-       return a non-OK status.  This class does not treat that case as an error which means that
-       anybody using it is assuming it is ok to continue execution without maintenance mode.  This
-       assumption needs to be audited and documented. */
+    /**
+     * Guard object for making a good-faith effort to enter maintenance mode and leave it when it
+     * goes out of scope.
+     *
+     * Sometimes we cannot set maintenance mode, in which case the call to setMaintenanceMode will
+     * return a non-OK status.  This class does not treat that case as an error which means that
+     * anybody using it is assuming it is ok to continue execution without maintenance mode.
+     *
+     * TODO: This assumption needs to be audited and documented, or this behavior should be moved
+     * elsewhere.
+     */
     class MaintenanceModeSetter {
     public:
-        MaintenanceModeSetter(OperationContext* txn) :
-            _txn(txn),
+        MaintenanceModeSetter() :
             maintenanceModeSet(
-                    repl::getGlobalReplicationCoordinator()->setMaintenanceMode(txn, true).isOK())
+                    repl::getGlobalReplicationCoordinator()->setMaintenanceMode(true).isOK())
             {}
         ~MaintenanceModeSetter() {
             if (maintenanceModeSet)
-                repl::getGlobalReplicationCoordinator()->setMaintenanceMode(_txn, false);
-        } 
+                repl::getGlobalReplicationCoordinator()->setMaintenanceMode(false);
+        }
     private:
-        // Not owned.
-        OperationContext* _txn;
         bool maintenanceModeSet;
     };
 
@@ -1399,10 +1424,8 @@ namespace mongo {
 
         txn->getCurOp()->setCommand(c);
 
-        if (c->maintenanceMode() &&
-                repl::getGlobalReplicationCoordinator()->getReplicationMode() ==
-                        repl::ReplicationCoordinator::modeReplSet) {
-            mmSetter.reset(new MaintenanceModeSetter(txn));
+        if (c->maintenanceMode()) {
+            mmSetter.reset(new MaintenanceModeSetter);
         }
 
         if (c->shouldAffectCommandCounter()) {
@@ -1449,7 +1472,7 @@ namespace mongo {
         }
 
         appendCommandStatus(result, retval, errmsg);
-        
+
         // For commands from mongos, append some info to help getLastError(w) work.
         if (replCoord->getReplicationMode() == repl::ReplicationCoordinator::modeReplSet) {
             // Detect mongos connections by looking for setShardVersion to have been run previously

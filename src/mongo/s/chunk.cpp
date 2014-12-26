@@ -77,6 +77,8 @@ namespace mongo {
         return true;
     }
 
+    static const int kTooManySplitPoints = 4;
+
     // -------  Shard --------
 
     long long Chunk::MaxChunkSize = 1024 * 1024 * 64;
@@ -84,10 +86,6 @@ namespace mongo {
 
     // Can be overridden from command line
     bool Chunk::ShouldAutoSplit = true;
-
-    // Maximum number of resulting chunks a chunk will be split into per operation.
-    // Note: this is only temporarily tunable, this can become fixed in the future.
-    MONGO_EXPORT_SERVER_PARAMETER(internalShardingMaxSplitPointsPerOperation, int, 10);
 
     /**
      * Attempts to move the given chunk to another shard.
@@ -227,9 +225,9 @@ namespace mongo {
             _manager->getShardKeyPattern().getKeyPattern().globalMax().woCompare( getMax() );
     }
 
-    BSONObj Chunk::_getExtremeKey( int sort ) const {
+    BSONObj Chunk::_getExtremeKey(bool doSplitAtLower) const {
         Query q;
-        if ( sort == 1 ) {
+        if (doSplitAtLower) {
             q.sort( _manager->getShardKeyPattern().toBSON() );
         }
         else {
@@ -248,9 +246,28 @@ namespace mongo {
 
             q.sort( r.obj() );
         }
+
         // find the extreme key
         ScopedDbConnection conn(getShard().getConnString());
-        BSONObj end = conn->findOne(_manager->getns(), q);
+        BSONObj end;
+
+        if (doSplitAtLower) {
+            // Splitting close to the lower bound means that the split point will be the
+            // upper bound. Chunk range upper bounds are exclusive so skip a document to
+            // make the lower half of the split end up with a single document.
+            auto_ptr<DBClientCursor> cursor = conn->query(_manager->getns(),
+                                                          q,
+                                                          1, /* nToReturn */
+                                                          1 /* nToSkip */);
+
+            if (cursor->more()) {
+                end = cursor->next().getOwned();
+            }
+        }
+        else {
+            end = conn->findOne(_manager->getns(), q);
+        }
+
         conn.done();
         if ( end.isEmpty() )
             return BSONObj();
@@ -330,14 +347,12 @@ namespace mongo {
 
             // Note: One split point for every 1/2 chunk size.
             const int estNumSplitPoints = _dataWritten / chunkSize * 2;
-            if (estNumSplitPoints > internalShardingMaxSplitPointsPerOperation) {
+            if (estNumSplitPoints >= kTooManySplitPoints) {
                 // The current desired chunk size will split the chunk into lots of small chunks
-                // (At the worst case, this can result into thousands of chunks); so use a
-                // bigger value.
+                // (At the worst case, this can result into thousands of chunks); so check and
+                // see if a bigger value can be used.
 
-                const long long newSize = _dataWritten /
-                        (internalShardingMaxSplitPointsPerOperation / 2);
-                chunkSize = min(newSize, Chunk::MaxChunkSize);
+                chunkSize = std::min(_dataWritten, Chunk::MaxChunkSize);
             }
 
             pickSplitVector(*splitPoints, chunkSize, 0, MaxObjectPerChunk);
@@ -349,42 +364,18 @@ namespace mongo {
                 splitPoints->clear();
             }
         }
-
-        if (splitPoints->empty()) {
-            return;
-        }
-
-        // We assume that if the chunk being split is the first (or last) one on the collection,
-        // this chunk is likely to see more insertions. Instead of splitting mid-chunk, we use
-        // the very first (or last) key as a split point.
-        // This heuristic is skipped for "special" shard key patterns that are not likely to
-        // produce monotonically increasing or decreasing values (e.g. hashed shard keys).
-        if (KeyPattern::isOrderedKeyPattern(_manager->getShardKeyPattern().toBSON())) {
-            if ( minIsInf() ) {
-                BSONObj key = _getExtremeKey( 1 );
-                if ( ! key.isEmpty() ) {
-                    (*splitPoints)[0] = key.getOwned();
-                }
-            }
-            else if ( maxIsInf() ) {
-                BSONObj key = _getExtremeKey( -1 );
-                if ( ! key.isEmpty() ) {
-                    splitPoints->pop_back();
-                    splitPoints->push_back( key );
-                }
-            }
-        }
     }
 
-    Status Chunk::split(bool atMedian, size_t* resultingSplits, BSONObj* res) const {
+    Status Chunk::split(SplitPointMode mode, size_t* resultingSplits, BSONObj* res) const {
         size_t dummy;
         if (resultingSplits == NULL) {
             resultingSplits = &dummy;
         }
 
+        bool atMedian = mode == Chunk::atMedian;
         vector<BSONObj> splitPoints;
-        determineSplitPoints( atMedian, &splitPoints );
 
+        determineSplitPoints( atMedian, &splitPoints );
         if (splitPoints.empty()) {
             string msg;
             if (atMedian) {
@@ -396,6 +387,29 @@ namespace mongo {
 
             LOG(1) << msg << endl;
             return Status(ErrorCodes::CannotSplit, msg);
+        }
+
+        // We assume that if the chunk being split is the first (or last) one on the collection,
+        // this chunk is likely to see more insertions. Instead of splitting mid-chunk, we use
+        // the very first (or last) key as a split point.
+        // This heuristic is skipped for "special" shard key patterns that are not likely to
+        // produce monotonically increasing or decreasing values (e.g. hashed shard keys).
+        if (mode == Chunk::autoSplitInternal &&
+            KeyPattern::isOrderedKeyPattern(_manager->getShardKeyPattern().toBSON())) {
+
+            if (minIsInf()) {
+                BSONObj key = _getExtremeKey(true);
+                if (!key.isEmpty()) {
+                    splitPoints[0] = key.getOwned();
+                }
+            }
+            else if (maxIsInf()) {
+                BSONObj key = _getExtremeKey(false);
+                if (!key.isEmpty()) {
+                    splitPoints.pop_back();
+                    splitPoints.push_back(key);
+                }
+            }
         }
 
         // Normally, we'd have a sound split point here if the chunk is not empty.
@@ -569,7 +583,7 @@ namespace mongo {
 
             BSONObj res;
             size_t splitCount = 0;
-            Status status = split(false /* does not force a split if not enough data */,
+            Status status = split(Chunk::autoSplitInternal,
                                   &splitCount,
                                   &res);
             if ( !status.isOK() ) {

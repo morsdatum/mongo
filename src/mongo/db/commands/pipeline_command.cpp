@@ -90,7 +90,7 @@ namespace mongo {
         if (pin) {
             invariant(cursor);
             invariant(cursor->getExecutor() == exec);
-            invariant(cursor->isAggCursor);
+            invariant(cursor->isAggCursor());
         }
 
         BSONElement batchSizeElem = cmdObj.getFieldDotted("cursor.batchSize");
@@ -148,18 +148,15 @@ namespace mongo {
             // getMore requests.  The calling OpCtx gets a fresh RecoveryUnit.
             cursor->setOwnedRecoveryUnit(txn->releaseRecoveryUnit());
             StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
-            txn->setRecoveryUnit(storageEngine->newRecoveryUnit(txn));
+            txn->setRecoveryUnit(storageEngine->newRecoveryUnit());
 
             // Cursor needs to be in a saved state while we yield locks for getmore. State
             // will be restored in getMore().
             exec->saveState();
         }
 
-        BSONObjBuilder cursorObj(result.subobjStart("cursor"));
-        cursorObj.append("id", cursor ? cursor->cursorid() : 0LL);
-        cursorObj.append("ns", ns);
-        cursorObj.append("firstBatch", resultsArray.arr());
-        cursorObj.done();
+        const long long cursorId = cursor ? cursor->cursorid() : 0LL;
+        Command::appendCursorResponseObject(cursorId, ns, resultsArray.arr(), &result);
     }
 
 
@@ -277,9 +274,11 @@ namespace mongo {
 
                 if (collection) {
                     // XXX
-                    ClientCursor* cursor = new ClientCursor(collection, execHolder.release());
-                    cursor->isAggCursor = true; // enable special locking behavior
-                    pin.reset(new ClientCursorPin(collection, cursor->cursorid()));
+                    const bool isAggCursor = true; // enable special locking behavior
+                    ClientCursor* cursor = new ClientCursor(collection->cursorManager(),
+                                                            execHolder.release(), 0, BSONObj(),
+                                                            isAggCursor);
+                    pin.reset(new ClientCursorPin(collection->cursorManager(), cursor->cursorid()));
                     // Don't add any code between here and the start of the try block.
                 }
             }

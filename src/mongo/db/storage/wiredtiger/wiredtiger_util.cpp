@@ -39,10 +39,12 @@
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
+#include "mongo/platform/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/scopeguard.h"
-#include "mongo/util/stacktrace.h"
 
 namespace mongo {
 
@@ -53,7 +55,6 @@ namespace mongo {
             return Status::OK();
 
         if ( retCode == WT_ROLLBACK ) {
-            //printStackTrace();
             throw WriteConflictException();
         }
 
@@ -72,13 +73,206 @@ namespace mongo {
         return Status(ErrorCodes::UnknownError, s);
     }
 
+    void WiredTigerUtil::fetchTypeAndSourceURI(OperationContext* opCtx,
+                                               const std::string& tableUri,
+                                               std::string* type,
+                                               std::string* source) {
+        std::string colgroupUri = "colgroup";
+        const size_t colon = tableUri.find(':');
+        invariant(colon != string::npos);
+        colgroupUri += tableUri.substr(colon);
+        StatusWith<std::string> colgroupResult = getMetadata(opCtx, colgroupUri);
+        invariant(colgroupResult.isOK());
+        WiredTigerConfigParser parser(colgroupResult.getValue());
+
+        WT_CONFIG_ITEM typeItem;
+        invariant(parser.get("type", &typeItem) == 0);
+        invariant(typeItem.type == WT_CONFIG_ITEM::WT_CONFIG_ITEM_ID);
+        *type = std::string(typeItem.str, typeItem.len);
+
+        WT_CONFIG_ITEM sourceItem;
+        invariant(parser.get("source", &sourceItem) == 0);
+        invariant(sourceItem.type == WT_CONFIG_ITEM::WT_CONFIG_ITEM_STRING);
+        *source = std::string(sourceItem.str, sourceItem.len);
+    }
+
+    StatusWith<std::string> WiredTigerUtil::getMetadata(OperationContext* opCtx,
+                                                        const StringData& uri) {
+        invariant(opCtx);
+        WiredTigerCursor curwrap("metadata:", WiredTigerSession::kMetadataCursorId, opCtx);
+        WT_CURSOR* cursor = curwrap.get();
+        invariant(cursor);
+        std::string strUri = uri.toString();
+        cursor->set_key(cursor, strUri.c_str());
+        int ret = cursor->search(cursor);
+        if (ret == WT_NOTFOUND) {
+            return StatusWith<std::string>(ErrorCodes::NoSuchKey, str::stream()
+                << "Unable to find metadata for " << uri);
+        }
+        else if (ret != 0) {
+            return StatusWith<std::string>(wtRCToStatus(ret));
+        }
+        const char* metadata = NULL;
+        ret = cursor->get_value(cursor, &metadata);
+        if (ret != 0) {
+            return StatusWith<std::string>(wtRCToStatus(ret));
+        }
+        invariant(metadata);
+        return StatusWith<std::string>(metadata);
+    }
+
+    Status WiredTigerUtil::getApplicationMetadata(OperationContext* opCtx,
+                                                  const StringData& uri,
+                                                  BSONObjBuilder* bob) {
+        StatusWith<std::string> metadataResult = getMetadata(opCtx, uri);
+        if (!metadataResult.isOK()) {
+            return metadataResult.getStatus();
+        }
+        WiredTigerConfigParser topParser(metadataResult.getValue());
+        WT_CONFIG_ITEM appMetadata;
+        if (topParser.get("app_metadata", &appMetadata) != 0) {
+            return Status::OK();
+        }
+        if (appMetadata.len == 0) {
+            return Status::OK();
+        }
+        if (appMetadata.type != WT_CONFIG_ITEM::WT_CONFIG_ITEM_STRUCT) {
+            return Status(ErrorCodes::FailedToParse, str::stream()
+                << "app_metadata must be a nested struct. Actual value: "
+                << StringData(appMetadata.str, appMetadata.len));
+        }
+
+        WiredTigerConfigParser parser(appMetadata);
+        WT_CONFIG_ITEM keyItem;
+        WT_CONFIG_ITEM valueItem;
+        int ret;
+        unordered_set<StringData, StringData::Hasher> keysSeen;
+        while ((ret = parser.next(&keyItem, &valueItem)) == 0) {
+            const StringData key(keyItem.str, keyItem.len);
+            if (keysSeen.count(key)) {
+                return Status(ErrorCodes::DuplicateKey, str::stream()
+                    << "app_metadata must not contain duplicate keys. "
+                    << "Found multiple instances of key '" << key << "'.");
+            }
+            keysSeen.insert(key);
+
+            switch (valueItem.type) {
+            case WT_CONFIG_ITEM::WT_CONFIG_ITEM_BOOL:
+                bob->appendBool(key, valueItem.val);
+                break;
+            case WT_CONFIG_ITEM::WT_CONFIG_ITEM_NUM:
+                bob->appendIntOrLL(key, valueItem.val);
+                break;
+            default:
+                bob->append(key, StringData(valueItem.str, valueItem.len));
+                break;
+            }
+        }
+        if (ret != WT_NOTFOUND) {
+            return wtRCToStatus(ret);
+        }
+
+        return Status::OK();
+    }
+
+    StatusWith<BSONObj> WiredTigerUtil::getApplicationMetadata(OperationContext* opCtx,
+                                                               const StringData& uri) {
+        BSONObjBuilder bob;
+        Status status = getApplicationMetadata(opCtx, uri, &bob);
+        if (!status.isOK()) {
+            return StatusWith<BSONObj>(status);
+        }
+        return StatusWith<BSONObj>(bob.obj());
+    }
+
+    Status WiredTigerUtil::checkApplicationMetadataFormatVersion(OperationContext* opCtx,
+                                                                 const StringData& uri,
+                                                                 int64_t minimumVersion,
+                                                                 int64_t maximumVersion) {
+
+        StatusWith<std::string> result = getMetadata(opCtx, uri);
+        if (result.getStatus().code() == ErrorCodes::NoSuchKey) {
+            return result.getStatus();
+        }
+        invariantOK(result.getStatus());
+
+        WiredTigerConfigParser topParser(result.getValue());
+        WT_CONFIG_ITEM metadata;
+        if (topParser.get("app_metadata", &metadata) != 0)
+            return Status(ErrorCodes::UnsupportedFormat, str::stream()
+                          << "application metadata for " << uri
+                          << " is missing ");
+
+        WiredTigerConfigParser parser(metadata);
+
+        int64_t version = 0;
+        WT_CONFIG_ITEM versionItem;
+        if (parser.get("formatVersion", &versionItem) != 0) {
+            // If 'formatVersion' is missing, this metadata was introduced by
+            // one of the RC versions (where the format version is 1).
+            version = 1;
+        }
+        else if (versionItem.type == WT_CONFIG_ITEM::WT_CONFIG_ITEM_NUM) {
+            version = versionItem.val;
+        }
+        else {
+            return Status(ErrorCodes::UnsupportedFormat, str::stream()
+                << "'formatVersion' in application metadata for " << uri
+                << " must be a number. Current value: "
+                << StringData(versionItem.str, versionItem.len));
+        }
+
+        if (version < minimumVersion || version > maximumVersion) {
+            return Status(ErrorCodes::UnsupportedFormat, str::stream()
+                << "Application metadata for " << uri
+                << " has unsupported format version " << version);
+        }
+
+        return Status::OK();
+    }
+
+    // static
+    StatusWith<uint64_t> WiredTigerUtil::getStatisticsValue(WT_SESSION* session,
+                                                            const std::string& uri,
+                                                            const std::string& config,
+                                                            int statisticsKey) {
+        invariant(session);
+        WT_CURSOR* cursor = NULL;
+        const char* cursorConfig = config.empty() ? NULL : config.c_str();
+        int ret = session->open_cursor(session, uri.c_str(), NULL, cursorConfig, &cursor);
+        if (ret != 0) {
+            return StatusWith<uint64_t>(ErrorCodes::CursorNotFound, str::stream()
+                << "unable to open cursor at URI " << uri
+                << ". reason: " << wiredtiger_strerror(ret));
+        }
+        invariant(cursor);
+        ON_BLOCK_EXIT(cursor->close, cursor);
+
+        cursor->set_key(cursor, statisticsKey);
+        ret = cursor->search(cursor);
+        if (ret != 0) {
+            return StatusWith<uint64_t>(ErrorCodes::NoSuchKey, str::stream()
+                << "unable to find key " << statisticsKey << " at URI " << uri
+                << ". reason: " << wiredtiger_strerror(ret));
+        }
+
+        uint64_t value;
+        ret = cursor->get_value(cursor, NULL, NULL, &value);
+        if (ret != 0) {
+            return StatusWith<uint64_t>(ErrorCodes::BadValue, str::stream()
+                << "unable to get value for key " << statisticsKey << " at URI " << uri
+                << ". reason: " << wiredtiger_strerror(ret));
+        }
+
+        return StatusWith<uint64_t>(value);
+    }
+
     int64_t WiredTigerUtil::getIdentSize(WT_SESSION* s,
                                          const std::string& uri ) {
-        BSONObjBuilder b;
-        Status status = WiredTigerUtil::exportTableToBSON(s,
-                                                          "statistics:" + uri,
-                                                          "statistics=(fast)",
-                                                          &b);
+        StatusWith<int64_t> result = WiredTigerUtil::getStatisticsValueAs<int64_t>(
+            s,
+            "statistics:" + uri, "statistics=(fast)", WT_STAT_DSRC_BLOCK_SIZE);
+        const Status& status = result.getStatus();
         if ( !status.isOK() ) {
             if ( status.code() == ErrorCodes::CursorNotFound ) {
                 // ident gone, so its 0
@@ -86,16 +280,7 @@ namespace mongo {
             }
             uassertStatusOK( status );
         }
-
-        BSONObj obj = b.obj();
-        BSONObj sub = obj["block-manager"].Obj();
-        BSONElement e = sub["file size in bytes"];
-        invariant( e.type() );
-
-        if ( e.isNumber() )
-            return e.safeNumberLong();
-
-        return strtoull( e.valuestrsafe(), NULL, 10 );
+        return result.getValue();
     }
 
 
@@ -105,7 +290,7 @@ namespace mongo {
         invariant(session);
         invariant(bob);
         WT_CURSOR* c = NULL;
-        const char *cursorConfig = config.empty() ? NULL : config.c_str();
+        const char* cursorConfig = config.empty() ? NULL : config.c_str();
         int ret = session->open_cursor(session, uri.c_str(), NULL, cursorConfig, &c);
         if (ret != 0) {
             return Status(ErrorCodes::CursorNotFound, str::stream()
@@ -117,9 +302,9 @@ namespace mongo {
         ON_BLOCK_EXIT(c->close, c);
 
         std::map<string,BSONObjBuilder*> subs;
-        const char *desc, *pvalue;
+        const char* desc;
         uint64_t value;
-        while (c->next(c) == 0 && c->get_value(c, &desc, &pvalue, &value) == 0) {
+        while (c->next(c) == 0 && c->get_value(c, &desc, NULL, &value) == 0) {
             StringData key( desc );
 
             StringData prefix;
@@ -143,11 +328,7 @@ namespace mongo {
                 suffix = "num";
             }
 
-            // Convert unsigned 64-bit integral value of statistic to BSON-friendly long long.
-            // If there is an overflow, set statistic value to max(long long).
-            const long long maxLL = std::numeric_limits<long long>::max();
-            long long v =  value > static_cast<uint64_t>(maxLL) ?
-                maxLL : static_cast<long long>(value);
+            long long v = _castStatisticsValue<long long>(value);
 
             if ( prefix.size() == 0 ) {
                 bob->appendNumber(desc, v);

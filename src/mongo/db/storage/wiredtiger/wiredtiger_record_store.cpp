@@ -31,13 +31,17 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kStorage
 
+#include "mongo/platform/basic.h"
+
+#include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
+
 #include <wiredtiger.h>
 
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/oplog_hack.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_global_options.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_size_storer.h"
@@ -52,77 +56,50 @@
 
 namespace mongo {
 namespace {
+    static const int kMinimumRecordStoreVersion = 1;
+    static const int kCurrentRecordStoreVersion = 1; // New record stores use this by default.
+    static const int kMaximumRecordStoreVersion = 1;
+    BOOST_STATIC_ASSERT(kCurrentRecordStoreVersion >= kMinimumRecordStoreVersion);
+    BOOST_STATIC_ASSERT(kCurrentRecordStoreVersion <= kMaximumRecordStoreVersion);
+
     bool shouldUseOplogHack(OperationContext* opCtx, const std::string& uri) {
-        WiredTigerCursor curwrap("metadata:", WiredTigerSession::kMetadataCursorId, opCtx);
-        WT_CURSOR* c = curwrap.get();
-        c->set_key(c, uri.c_str());
-        int ret = c->search(c);
-        if (ret == WT_NOTFOUND)
+        StatusWith<BSONObj> appMetadata = WiredTigerUtil::getApplicationMetadata(opCtx, uri);
+        if (!appMetadata.isOK()) {
             return false;
-        invariantWTOK(ret);
-
-        const char* config = NULL;
-        c->get_value(c, &config);
-        invariant(config);
-
-        WiredTigerConfigParser topParser(config);
-        WT_CONFIG_ITEM metadata;
-        if (topParser.get("app_metadata", &metadata) != 0)
-            return false;
-
-        if (metadata.len == 0)
-            return false;
-
-        WiredTigerConfigParser parser(metadata);
-        WT_CONFIG_ITEM keyItem;
-        WT_CONFIG_ITEM value;
-        while (parser.next(&keyItem, &value) == 0) {
-            const StringData key(keyItem.str, keyItem.len);
-            if (key == "oplogKeyExtractionVersion") {
-                if (value.type == WT_CONFIG_ITEM::WT_CONFIG_ITEM_NUM &&  value.val == 1)
-                    return true;
-            }
-
-            // This prevents downgrades with unsupported metadata settings.
-            severe() << "Unrecognized WiredTiger metadata setting: " << key << '=' << value.str;
-            fassertFailedNoTrace(28548);
         }
 
-        return false;
+        return (appMetadata.getValue().getIntField("oplogKeyExtractionVersion") == 1);
     }
-
-    class CappedInsertChange : public RecoveryUnit::Change {
-    public:
-        CappedInsertChange( WiredTigerRecordStore* rs, const RecordId& loc )
-            : _rs( rs ), _loc( loc ) {
-        }
-
-        virtual void commit() {
-            _rs->dealtWithCappedLoc( _loc );
-        }
-
-        virtual void rollback() {
-            _rs->dealtWithCappedLoc( _loc );
-        }
-
-    private:
-        WiredTigerRecordStore* _rs;
-        RecordId _loc;
-    };
-
 } // namespace
 
     const std::string kWiredTigerEngineName = "wiredTiger";
 
-    StatusWith<std::string> WiredTigerRecordStore::generateCreateString(const StringData& ns,
-                                                                        const CollectionOptions& options,
-                                                                        const StringData& extraStrings) {
+    // static
+    StatusWith<std::string> WiredTigerRecordStore::generateCreateString(
+        const StringData& ns,
+        const CollectionOptions& options,
+        const StringData& extraStrings) {
+
         // Separate out a prefix and suffix in the default string. User configuration will
         // override values in the prefix, but not values in the suffix.
         str::stream ss;
         ss << "type=file,";
         ss << "memory_page_max=100m,";
-        ss << "block_compressor=snappy,";
+        ss << "leaf_value_max=1MB,";
+        if (wiredTigerGlobalOptions.useCollectionPrefixCompression) {
+            ss << "prefix_compression,";
+        }
+
+        // TODO: remove this; SERVER-16568
+        std::string localCollectionBlockCompressor;
+        if (wiredTigerGlobalOptions.collectionBlockCompressor == "none") {
+            localCollectionBlockCompressor = "";
+        }
+        else {
+            localCollectionBlockCompressor = wiredTigerGlobalOptions.collectionBlockCompressor;
+        }
+
+        ss << "block_compressor=" << localCollectionBlockCompressor << ",";
 
         ss << extraStrings << ",";
 
@@ -134,9 +111,10 @@ namespace {
             if (elem.fieldNameStringData() == "configString") {
                 if (elem.type() != String) {
                     return StatusWith<std::string>(ErrorCodes::TypeMismatch, str::stream()
-                        << "storageEngine.wiredTiger.configString must be a string. "
-                        << "Not adding 'configString' value "
-                        << elem << " to collection configuration");
+                                                   << "storageEngine.wiredTiger.configString "
+                                                   << "must be a string. "
+                                                   << "Not adding 'configString' value "
+                                                   << elem << " to collection configuration");
                     continue;
                 }
                 ss << elem.valueStringData() << ",";
@@ -144,24 +122,31 @@ namespace {
             else {
                 // Return error on first unrecognized field.
                 return StatusWith<std::string>(ErrorCodes::InvalidOptions, str::stream()
-                    << '\'' << elem.fieldNameStringData() << '\''
-                    << " is not a supported option in storageEngine.wiredTiger");
+                                               << '\'' << elem.fieldNameStringData() << '\''
+                                               << " is not a supported option in "
+                                               << "storageEngine.wiredTiger");
             }
         }
 
         if ( NamespaceString::oplog(ns) ) {
             // force file for oplog
             ss << "type=file,";
-            ss << "app_metadata=(oplogKeyExtractionVersion=1),";
             // Tune down to 10m.  See SERVER-16247
             ss << "memory_page_max=10m,";
         }
-        else {
-            // Force this to be empty since users shouldn't be allowed to change it.
-            ss << "app_metadata=(),";
-        }
+
+        // WARNING: No user-specified config can appear below this line. These options are required
+        // for correct behavior of the server.
 
         ss << "key_format=q,value_format=u";
+
+        // Record store metadata
+        ss << ",app_metadata=(formatVersion=" << kCurrentRecordStoreVersion;
+        if (NamespaceString::oplog(ns)) {
+            ss << ",oplogKeyExtractionVersion=1";
+        }
+        ss << ")";
+
         return StatusWith<std::string>(ss);
     }
 
@@ -173,7 +158,7 @@ namespace {
                                                  int64_t cappedMaxDocs,
                                                  CappedDocumentDeleteCallback* cappedDeleteCallback,
                                                  WiredTigerSizeStorer* sizeStorer)
-            : RecordStore( ns ),
+    : RecordStore( ns ),
               _uri( uri.toString() ),
               _instanceId( WiredTigerSession::genCursorId() ),
               _isCapped( isCapped ),
@@ -181,10 +166,16 @@ namespace {
               _cappedMaxSize( cappedMaxSize ),
               _cappedMaxDocs( cappedMaxDocs ),
               _cappedDeleteCallback( cappedDeleteCallback ),
+              _cappedDeleteCheckCount(0),
               _useOplogHack(shouldUseOplogHack(ctx, _uri)),
               _sizeStorer( sizeStorer ),
               _sizeStorerCounter(0)
     {
+        Status versionStatus = WiredTigerUtil::checkApplicationMetadataFormatVersion(
+            ctx, uri, kMinimumRecordStoreVersion, kMaximumRecordStoreVersion);
+        if (!versionStatus.isOK()) {
+            fassertFailedWithStatusNoTrace(28548, versionStatus);
+        }
 
         if (_isCapped) {
             invariant(_cappedMaxSize > 0);
@@ -208,7 +199,7 @@ namespace {
         }
         else {
             RecordId maxLoc = iterator->curr();
-            uint64_t max = _makeKey( maxLoc );
+            int64_t max = _makeKey( maxLoc );
             _oplog_highestSeen = maxLoc;
             _nextIdNum.store( 1 + max );
 
@@ -280,26 +271,16 @@ namespace {
     int64_t WiredTigerRecordStore::storageSize( OperationContext* txn,
                                                 BSONObjBuilder* extraInfo,
                                                 int infoLevel ) const {
+        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession();
+        StatusWith<int64_t> result = WiredTigerUtil::getStatisticsValueAs<int64_t>(
+            session->getSession(),
+            "statistics:" + getURI(), "statistics=(fast)", WT_STAT_DSRC_BLOCK_SIZE);
+        uassertStatusOK(result.getStatus());
 
-        BSONObjBuilder b;
-        appendCustomStats( txn, &b, 1 );
-        BSONObj obj = b.obj();
-
-        BSONObj blockManager = obj[kWiredTigerEngineName].Obj()["block-manager"].Obj();
-        BSONElement fileSize = blockManager["file size in bytes"];
-        invariant( fileSize.type() );
-
-        int64_t size = 0;
-        if ( fileSize.isNumber() ) {
-            size = fileSize.safeNumberLong();
-        }
-        else {
-            invariant( fileSize.type() == String );
-            size = strtoll( fileSize.valuestrsafe(), NULL, 10 );
-        }
+        int64_t size = result.getValue();
 
         if ( size == 0 && _isCapped ) {
-            // Many things assume anempty capped collection still takes up space.
+            // Many things assume an empty capped collection still takes up space.
             return 1;
         }
         return size;
@@ -378,17 +359,15 @@ namespace {
         return false;
     }
 
-    namespace {
-        int oplogCounter = 0;
-    }
-
     void WiredTigerRecordStore::cappedDeleteAsNeeded(OperationContext* txn,
                                                      const RecordId& justInserted ) {
 
-        if ( _isOplog ) {
-            if ( oplogCounter++ % 100 > 0 )
-                return;
-        }
+        // We only want to do the checks occasionally as they are expensive.
+        // This variable isn't thread safe, but has loose semantics anyway.
+        dassert( !_isOplog || _cappedMaxDocs == -1 );
+        if ( _cappedMaxDocs == -1 && // Max docs has to be exact, so have to check every time.
+             _cappedDeleteCheckCount++ % 100 > 0 )
+            return;
 
         if (!cappedAndNeedDelete())
             return;
@@ -398,14 +377,12 @@ namespace {
         if ( !lock )
             return;
 
-        WiredTigerRecoveryUnit* realRecoveryUnit = NULL;
-        if ( _isOplog ) {
-            // we do this is a sub transaction in case it aborts
-            realRecoveryUnit = dynamic_cast<WiredTigerRecoveryUnit*>( txn->releaseRecoveryUnit() );
-            invariant( realRecoveryUnit );
-            WiredTigerSessionCache* sc = realRecoveryUnit->getSessionCache();
-            txn->setRecoveryUnit( new WiredTigerRecoveryUnit( sc ) );
-        }
+        // we do this is a sub transaction in case it aborts
+        WiredTigerRecoveryUnit* realRecoveryUnit =
+            dynamic_cast<WiredTigerRecoveryUnit*>( txn->releaseRecoveryUnit() );
+        invariant( realRecoveryUnit );
+        WiredTigerSessionCache* sc = realRecoveryUnit->getSessionCache();
+        txn->setRecoveryUnit( new WiredTigerRecoveryUnit( sc ) );
 
         try {
             WiredTigerCursor curwrap( _uri, _instanceId, txn);
@@ -417,7 +394,7 @@ namespace {
 
                 invariant(_numRecords.load() > 0);
 
-                uint64_t key;
+                int64_t key;
                 ret = c->get_key(c, &key);
                 invariantWTOK(ret);
                 oldest = _fromKey(key);
@@ -440,40 +417,33 @@ namespace {
 
         }
         catch ( const WriteConflictException& wce ) {
-            if ( _isOplog ) {
-                delete txn->releaseRecoveryUnit();
-                txn->setRecoveryUnit( realRecoveryUnit );
-                log() << "got conflict purging oplog, ignoring";
-                return;
-            }
-            throw;
+            delete txn->releaseRecoveryUnit();
+            txn->setRecoveryUnit( realRecoveryUnit );
+            log() << "got conflict truncating capped, ignoring";
+            return;
         }
         catch ( ... ) {
-            if ( _isOplog ) {
-                delete txn->releaseRecoveryUnit();
-                txn->setRecoveryUnit( realRecoveryUnit );
-            }
+            delete txn->releaseRecoveryUnit();
+            txn->setRecoveryUnit( realRecoveryUnit );
             throw;
         }
 
-        if ( _isOplog ) {
-            delete txn->releaseRecoveryUnit();
-            txn->setRecoveryUnit( realRecoveryUnit );
-        }
+        delete txn->releaseRecoveryUnit();
+        txn->setRecoveryUnit( realRecoveryUnit );
     }
 
     StatusWith<RecordId> WiredTigerRecordStore::extractAndCheckLocForOplog(const char* data,
-                                                                          int len) {
+                                                                           int len) {
         return oploghack::extractKey(data, len);
     }
 
     StatusWith<RecordId> WiredTigerRecordStore::insertRecord( OperationContext* txn,
-                                                             const char* data,
-                                                             int len,
-                                                             bool enforceQuota ) {
+                                                              const char* data,
+                                                              int len,
+                                                              bool enforceQuota ) {
         if ( _isCapped && len > _cappedMaxSize ) {
             return StatusWith<RecordId>( ErrorCodes::BadValue,
-                                       "object to insert exceeds cappedMaxSize" );
+                                         "object to insert exceeds cappedMaxSize" );
         }
 
         RecordId loc;
@@ -509,7 +479,7 @@ namespace {
         int ret = c->insert(c);
         if ( ret ) {
             return StatusWith<RecordId>( wtRCToStatus( ret,
-                                                      "WiredTigerRecordStore::insertRecord" ) );
+                                                       "WiredTigerRecordStore::insertRecord" ) );
         }
 
         _changeNumRecords( txn, true );
@@ -538,8 +508,8 @@ namespace {
     }
 
     StatusWith<RecordId> WiredTigerRecordStore::insertRecord( OperationContext* txn,
-                                                             const DocWriter* doc,
-                                                             bool enforceQuota ) {
+                                                              const DocWriter* doc,
+                                                              bool enforceQuota ) {
         const int len = doc->documentSize();
 
         boost::shared_array<char> buf( new char[len] );
@@ -549,11 +519,11 @@ namespace {
     }
 
     StatusWith<RecordId> WiredTigerRecordStore::updateRecord( OperationContext* txn,
-                                                        const RecordId& loc,
-                                                        const char* data,
-                                                        int len,
-                                                        bool enforceQuota,
-                                                        UpdateMoveNotifier* notifier ) {
+                                                              const RecordId& loc,
+                                                              const char* data,
+                                                              int len,
+                                                              bool enforceQuota,
+                                                              UpdateMoveNotifier* notifier ) {
         WiredTigerCursor curwrap( _uri, _instanceId, txn);
         curwrap.assertInActiveTxn();
         WT_CURSOR *c = curwrap.get();
@@ -584,7 +554,7 @@ namespace {
     Status WiredTigerRecordStore::updateWithDamages( OperationContext* txn,
                                                      const RecordId& loc,
                                                      const RecordData& oldRec,
-                                                     const char* damangeSource,
+                                                     const char* damageSource,
                                                      const mutablebson::DamageVector& damages ) {
 
         // apply changes to our copy
@@ -594,7 +564,7 @@ namespace {
         char* root = const_cast<char*>( data.c_str() );
         for( size_t i = 0; i < damages.size(); i++ ) {
             mutablebson::DamageEvent event = damages[i];
-            const char* sourcePtr = damangeSource + event.sourceOffset;
+            const char* sourcePtr = damageSource + event.sourceOffset;
             char* targetPtr = root + event.targetOffset;
             std::memcpy(targetPtr, sourcePtr, event.size);
         }
@@ -625,9 +595,11 @@ namespace {
         }
     }
 
-    RecordIterator* WiredTigerRecordStore::getIterator( OperationContext* txn,
-                                                        const RecordId& start,
-                                                        const CollectionScanParams::Direction& dir ) const {
+    RecordIterator* WiredTigerRecordStore::getIterator(
+        OperationContext* txn,
+        const RecordId& start,
+        const CollectionScanParams::Direction& dir) const {
+
         if ( _isOplog && dir == CollectionScanParams::FORWARD ) {
             WiredTigerRecoveryUnit* wru = WiredTigerRecoveryUnit::get(txn);
             if ( !wru->inActiveTxn() || wru->getOplogReadTill().isNull() ) {
@@ -641,7 +613,8 @@ namespace {
 
 
     std::vector<RecordIterator*> WiredTigerRecordStore::getManyIterators(
-            OperationContext* txn ) const {
+        OperationContext* txn ) const {
+
         // XXX do we want this to actually return a set of iterators?
 
         std::vector<RecordIterator*> iterators;
@@ -665,23 +638,24 @@ namespace {
     }
 
     Status WiredTigerRecordStore::compact( OperationContext* txn,
-                                      RecordStoreCompactAdaptor* adaptor,
-                                      const CompactOptions* options,
-                                      CompactStats* stats ) {
+                                           RecordStoreCompactAdaptor* adaptor,
+                                           const CompactOptions* options,
+                                           CompactStats* stats ) {
         WiredTigerSessionCache* cache = WiredTigerRecoveryUnit::get(txn)->getSessionCache();
         WiredTigerSession* session = cache->getSession();
         WT_SESSION *s = session->getSession();
-        int ret = s->compact(s, GetURI().c_str(), NULL);
+        int ret = s->compact(s, getURI().c_str(), NULL);
         invariantWTOK(ret);
         cache->releaseSession(session);
         return Status::OK();
     }
 
     Status WiredTigerRecordStore::validate( OperationContext* txn,
-                                       bool full, bool scanData,
-                                       ValidateAdaptor* adaptor,
-                                       ValidateResults* results,
-                                       BSONObjBuilder* output ) const {
+                                            bool full,
+                                            bool scanData,
+                                            ValidateAdaptor* adaptor,
+                                            ValidateResults* results,
+                                            BSONObjBuilder* output ) const {
 
         long long nrecords = 0;
         boost::scoped_ptr<RecordIterator> iter( getIterator( txn ) );
@@ -695,7 +669,7 @@ namespace {
                 Status status = adaptor->validate( data, &dataSize );
                 if ( !status.isOK() ) {
                     results->valid = false;
-                    results->errors.push_back( loc.toString() + " is corrupted" );
+                    results->errors.push_back( str::stream() << loc << " is corrupted" );
                 }
             }
             iter->getNext();
@@ -706,7 +680,7 @@ namespace {
         WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession();
         WT_SESSION* s = session->getSession();
         BSONObjBuilder bob(output->subobjStart(kWiredTigerEngineName));
-        Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + GetURI(),
+        Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + getURI(),
                                                           "statistics=(fast)", &bob);
         if (!status.isOK()) {
             bob.append("error", "unable to retrieve statistics");
@@ -722,20 +696,46 @@ namespace {
         result->appendBool( "capped", _isCapped );
         if ( _isCapped ) {
             result->appendIntOrLL( "max", _cappedMaxDocs );
-            result->appendIntOrLL( "maxSize", _cappedMaxSize );
+            result->appendIntOrLL( "maxSize", static_cast<long long>(_cappedMaxSize / scale) );
         }
         WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession();
         WT_SESSION* s = session->getSession();
         BSONObjBuilder bob(result->subobjStart(kWiredTigerEngineName));
-        Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + GetURI(),
+        {
+            BSONObjBuilder metadata(bob.subobjStart("metadata"));
+            Status status = WiredTigerUtil::getApplicationMetadata(txn, getURI(), &metadata);
+            if (!status.isOK()) {
+                metadata.append("error", "unable to retrieve metadata");
+                metadata.append("code", static_cast<int>(status.code()));
+                metadata.append("reason", status.reason());
+            }
+        }
+
+        std::string type, sourceURI;
+        WiredTigerUtil::fetchTypeAndSourceURI(txn, _uri, &type, &sourceURI);
+        StatusWith<std::string> metadataResult = WiredTigerUtil::getMetadata(txn, sourceURI);
+        StringData creationStringName("creationString");
+        if (!metadataResult.isOK()) {
+            BSONObjBuilder creationString(bob.subobjStart(creationStringName));
+            creationString.append("error", "unable to retrieve creation config");
+            creationString.append("code", static_cast<int>(metadataResult.getStatus().code()));
+            creationString.append("reason", metadataResult.getStatus().reason());
+        }
+        else {
+            bob.append("creationString", metadataResult.getValue());
+            // Type can be "lsm" or "file"
+            bob.append("type", type);
+        }
+
+        Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + getURI(),
                                                           "statistics=(fast)", &bob);
         if (!status.isOK()) {
             bob.append("error", "unable to retrieve statistics");
             bob.append("code", static_cast<int>(status.code()));
             bob.append("reason", status.reason());
         }
-    }
 
+    }
 
     Status WiredTigerRecordStore::touch( OperationContext* txn, BSONObjBuilder* output ) const {
         if (output) {
@@ -775,6 +775,25 @@ namespace {
         return Status::OK();
     }
 
+    class WiredTigerRecordStore::CappedInsertChange : public RecoveryUnit::Change {
+    public:
+        CappedInsertChange( WiredTigerRecordStore* rs, const RecordId& loc )
+            : _rs( rs ), _loc( loc ) {
+        }
+
+        virtual void commit() {
+            _rs->dealtWithCappedLoc( _loc );
+        }
+
+        virtual void rollback() {
+            _rs->dealtWithCappedLoc( _loc );
+        }
+
+    private:
+        WiredTigerRecordStore* _rs;
+        RecordId _loc;
+    };
+
     void WiredTigerRecordStore::_addUncommitedDiskLoc_inlock( OperationContext* txn,
                                                               const RecordId& loc ) {
         // todo: make this a dassert at some point
@@ -785,10 +804,12 @@ namespace {
         _oplog_highestSeen = loc;
     }
 
-    RecordId WiredTigerRecordStore::oplogStartHack(OperationContext* txn,
-                                                  const RecordId& startingPosition) const {
+    boost::optional<RecordId> WiredTigerRecordStore::oplogStartHack(
+            OperationContext* txn,
+            const RecordId& startingPosition) const {
+
         if (!_useOplogHack)
-            return RecordId().setInvalid();
+            return boost::none;
 
         {
             WiredTigerRecoveryUnit* wru = WiredTigerRecoveryUnit::get(txn);
@@ -805,7 +826,7 @@ namespace {
         if (ret == WT_NOTFOUND) return RecordId(); // nothing <= startingPosition
         invariantWTOK(ret);
 
-        uint64_t key;
+        int64_t key;
         ret = c->get_key(c, &key);
         invariantWTOK(ret);
         return _fromKey(key);
@@ -813,12 +834,9 @@ namespace {
 
     RecordId WiredTigerRecordStore::_nextId() {
         invariant(!_useOplogHack);
-        const uint64_t myId = _nextIdNum.fetchAndAdd(1);
-        int a = myId >> 32;
-        // This masks the lowest 4 bytes of myId
-        int ofs = myId & 0x00000000FFFFFFFF;
-        RecordId loc( a, ofs );
-        return loc;
+        RecordId out = RecordId(_nextIdNum.fetchAndAdd(1));
+        invariant(out.isNormal());
+        return out;
     }
 
     WiredTigerRecoveryUnit* WiredTigerRecordStore::_getRecoveryUnit( OperationContext* txn ) {
@@ -879,28 +897,26 @@ namespace {
         }
     }
 
-    uint64_t WiredTigerRecordStore::_makeKey( const RecordId& loc ) {
-        return ((uint64_t)loc.a() << 32 | loc.getOfs());
+    int64_t WiredTigerRecordStore::_makeKey( const RecordId& loc ) {
+        return loc.repr();
     }
-    RecordId WiredTigerRecordStore::_fromKey( uint64_t key ) {
-        uint32_t a = key >> 32;
-        uint32_t ofs = (uint32_t)key;
-        return RecordId(a, ofs);
+    RecordId WiredTigerRecordStore::_fromKey( int64_t key ) {
+        return RecordId(key);
     }
 
     // --------
 
     WiredTigerRecordStore::Iterator::Iterator(
-            const WiredTigerRecordStore& rs,
-            OperationContext *txn,
-            const RecordId& start,
-            const CollectionScanParams::Direction& dir,
-            bool forParallelCollectionScan)
+        const WiredTigerRecordStore& rs,
+        OperationContext *txn,
+        const RecordId& start,
+        const CollectionScanParams::Direction& dir,
+        bool forParallelCollectionScan)
         : _rs( rs ),
           _txn( txn ),
           _forward( dir == CollectionScanParams::FORWARD ),
           _forParallelCollectionScan( forParallelCollectionScan ),
-          _cursor( new WiredTigerCursor( rs.GetURI(), rs.instanceId(), txn ) ),
+          _cursor( new WiredTigerCursor( rs.getURI(), rs.instanceId(), txn ) ),
           _eof(false),
           _readUntilForOplog(WiredTigerRecoveryUnit::get(txn)->getOplogReadTill()) {
         RS_ITERATOR_TRACE("start");
@@ -971,7 +987,7 @@ namespace {
 
         WT_CURSOR *c = _cursor->get();
         dassert( c );
-        uint64_t key;
+        int64_t key;
         int ret = c->get_key(c, &key);
         invariantWTOK(ret);
         return _fromKey(key);
@@ -1069,7 +1085,7 @@ namespace {
             // parallel collection scan or something
             needRestore = true;
             _savedRecoveryUnit = txn->recoveryUnit();
-            _cursor.reset( new WiredTigerCursor( _rs.GetURI(), _rs.instanceId(), txn ) );
+            _cursor.reset( new WiredTigerCursor( _rs.getURI(), _rs.instanceId(), txn ) );
             _forParallelCollectionScan = false; // we only do this the first time
         }
 
@@ -1109,8 +1125,8 @@ namespace {
     }
 
     void WiredTigerRecordStore::temp_cappedTruncateAfter( OperationContext* txn,
-                                                     RecordId end,
-                                                     bool inclusive ) {
+                                                          RecordId end,
+                                                          bool inclusive ) {
         WriteUnitOfWork wuow(txn);
         boost::scoped_ptr<RecordIterator> iter( getIterator( txn, end ) );
         while( !iter->isEOF() ) {

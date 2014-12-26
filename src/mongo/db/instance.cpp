@@ -64,14 +64,17 @@
 #include "mongo/db/mongod_options.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/catalog/index_create.h"
-#include "mongo/db/ops/delete_executor.h"
+#include "mongo/db/exec/delete.h"
+#include "mongo/db/exec/update.h"
 #include "mongo/db/ops/delete_request.h"
 #include "mongo/db/ops/insert.h"
+#include "mongo/db/ops/parsed_delete.h"
+#include "mongo/db/ops/parsed_update.h"
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/ops/update_driver.h"
-#include "mongo/db/ops/update_executor.h"
 #include "mongo/db/ops/update_request.h"
 #include "mongo/db/query/find.h"
+#include "mongo/db/query/get_executor.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_coordinator_global.h"
 #include "mongo/db/stats/counters.h"
@@ -487,7 +490,7 @@ namespace {
 
         if ( currentOp.shouldDBProfile( debug.executionTime ) ) {
             // performance profiling is on
-            if (txn->lockState()->hasAnyReadLock()) {
+            if (txn->lockState()->isReadLocked()) {
                 MONGO_LOG_COMPONENT(1, logComponentForOp(op))
                         << "note: not profiling because recursive read lock" << endl;
             }
@@ -519,7 +522,7 @@ namespace {
 
         const char* cursorArray = dbmessage.getArray(n);
 
-        int found = CollectionCursorCache::eraseCursorGlobalIfAuthorized(txn, n, cursorArray);
+        int found = CursorManager::eraseCursorGlobalIfAuthorized(txn, n, cursorArray);
 
         if ( logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(1)) || found != n ) {
             LOG( found == n ? 1 : 0 ) << "killcursors: found " << found << " of " << n << endl;
@@ -570,8 +573,8 @@ namespace {
         int attempt = 1;
         while ( 1 ) {
             try {
-                UpdateExecutor executor(txn, &request, &op.debug());
-                uassertStatusOK(executor.prepare());
+                ParsedUpdate parsedUpdate(txn, &request);
+                uassertStatusOK(parsedUpdate.parseRequest());
 
                 //  Tentatively take an intent lock, fix up if we need to create the collection
                 ScopedTransaction transaction(txn, MODE_IX);
@@ -585,7 +588,17 @@ namespace {
 
                 //  The common case: no implicit collection creation
                 if (!upsert || ctx.db()->getCollection(txn, ns) != NULL) {
-                    UpdateResult res = executor.execute(ctx.db());
+                    PlanExecutor* rawExec;
+                    uassertStatusOK(getExecutorUpdate(txn,
+                                                      ctx.db()->getCollection(txn, ns),
+                                                      &parsedUpdate,
+                                                      &op.debug(),
+                                                      &rawExec));
+                    boost::scoped_ptr<PlanExecutor> exec(rawExec);
+
+                    // Run the plan and get stats out.
+                    uassertStatusOK(exec->executePlan());
+                    UpdateResult res = UpdateStage::makeUpdateResult(exec.get(), &op.debug());
 
                     // for getlasterror
                     lastError.getSafe()->recordUpdate( res.existing , res.numMatched , res.upserted );
@@ -605,8 +618,8 @@ namespace {
         //  This is an upsert into a non-existing database, so need an exclusive lock
         //  to avoid deadlock
         {
-            UpdateExecutor executor(txn, &request, &op.debug());
-            uassertStatusOK(executor.prepare());
+            ParsedUpdate parsedUpdate(txn, &request);
+            uassertStatusOK(parsedUpdate.parseRequest());
 
             ScopedTransaction transaction(txn, MODE_IX);
             Lock::DBLock dbLock(txn->lockState(), ns.db(), MODE_X);
@@ -625,7 +638,18 @@ namespace {
                 wuow.commit();
             }
 
-            UpdateResult res = executor.execute(db);
+            PlanExecutor* rawExec;
+            uassertStatusOK(getExecutorUpdate(txn,
+                                              ctx.db()->getCollection(txn, ns),
+                                              &parsedUpdate,
+                                              &op.debug(),
+                                              &rawExec));
+            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+
+            // Run the plan and get stats out.
+            uassertStatusOK(exec->executePlan());
+            UpdateResult res = UpdateStage::makeUpdateResult(exec.get(), &op.debug());
+
             lastError.getSafe()->recordUpdate( res.existing , res.numMatched , res.upserted );
         }
     }
@@ -658,17 +682,29 @@ namespace {
         int attempt = 1;
         while ( 1 ) {
             try {
-                DeleteExecutor executor(txn, &request);
-                uassertStatusOK(executor.prepare());
+                ParsedDelete parsedDelete(txn, &request);
+                uassertStatusOK(parsedDelete.parseRequest());
 
+                ScopedTransaction scopedXact(txn, MODE_IX);
                 AutoGetDb autoDb(txn, ns.db(), MODE_IX);
-                if (!autoDb.getDb()) break;
+                if (!autoDb.getDb()) {
+                    break;
+                }
 
                 Lock::CollectionLock colLock(txn->lockState(), ns.ns(), MODE_IX);
                 Client::Context ctx(txn, ns);
 
-                long long n = executor.execute(ctx.db());
-                lastError.getSafe()->recordDelete( n );
+                PlanExecutor* rawExec;
+                uassertStatusOK(getExecutorDelete(txn,
+                                                  ctx.db()->getCollection(txn, ns),
+                                                  &parsedDelete,
+                                                  &rawExec));
+                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+
+                // Run the plan and get the number of docs deleted.
+                uassertStatusOK(exec->executePlan());
+                long long n = DeleteStage::getNumDeleted(exec.get());
+                lastError.getSafe()->recordDelete(n);
                 op.debug().ndeleted = n;
 
                 break;
@@ -710,8 +746,14 @@ namespace {
                 const NamespaceString nsString( ns );
                 uassert( 16258, str::stream() << "Invalid ns [" << ns << "]", nsString.isValid() );
 
-                Status status = txn->getClient()->getAuthorizationSession()->checkAuthForGetMore(
-                        nsString, cursorid);
+                Status status = Status::OK();
+                if (CursorManager::getGlobalCursorManager()->ownsCursorId(cursorid)) {
+                    // TODO Implement auth check for global cursors.  SERVER-16657.
+                }
+                else {
+                    status = txn->getClient()->getAuthorizationSession()->checkAuthForGetMore(
+                            nsString, cursorid);
+                }
                 audit::logGetMoreAuthzCheck(txn->getClient(), nsString, cursorid, status.code());
                 uassertStatusOK(status);
 
@@ -745,7 +787,7 @@ namespace {
                     // because it may now be out of sync with the client's iteration state.
                     // SERVER-7952
                     // TODO Temporary code, see SERVER-4563 for a cleanup overview.
-                    CollectionCursorCache::eraseCursorGlobal(txn, cursorid );
+                    CursorManager::eraseCursorGlobal(txn, cursorid );
                 }
                 ex.reset( new AssertionException( e.getInfo().msg, e.getCode() ) );
                 ok = false;
@@ -1063,7 +1105,7 @@ namespace {
         // operation context, which also instantiates a recovery unit. Also, using the
         // lockGlobalBegin/lockGlobalComplete sequence, we avoid taking the flush lock. This will
         // all go away if we start acquiring the global/flush lock as part of ScopedTransaction.
-        DefaultLockerImpl globalLocker(0);
+        DefaultLockerImpl globalLocker;
         LockResult result = globalLocker.lockGlobalBegin(MODE_X);
         if (result == LOCK_WAITING) {
             result = globalLocker.lockGlobalComplete(UINT_MAX);

@@ -192,9 +192,19 @@ namespace mongo {
 
         // This is a read lock.
         const NamespaceString nss(ns);
-        scoped_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(txn, nss));
-        Collection* collection = ctx->getCollection();
-        uassert( 17356, "collection dropped between getMore calls", collection );
+        boost::scoped_ptr<AutoGetCollectionForRead> ctx;
+
+        CursorManager* cursorManager;
+        CursorManager* globalCursorManager = CursorManager::getGlobalCursorManager();
+        if (globalCursorManager->ownsCursorId(cursorid)) {
+            cursorManager = globalCursorManager;
+        }
+        else {
+            ctx.reset(new AutoGetCollectionForRead(txn, nss));
+            Collection* collection = ctx->getCollection();
+            uassert( 17356, "collection dropped between getMore calls", collection );
+            cursorManager = collection->cursorManager();
+        }
 
         QLOG() << "Running getMore, cursorid: " << cursorid << endl;
 
@@ -211,7 +221,7 @@ namespace mongo {
         // A pin performs a CC lookup and if there is a CC, increments the CC's pin value so it
         // doesn't time out.  Also informs ClientCursor that there is somebody actively holding the
         // CC, so don't delete it.
-        ClientCursorPin ccPin(collection, cursorid);
+        ClientCursorPin ccPin(cursorManager, cursorid);
         ClientCursor* cc = ccPin.c();
 
         // If we're not being called from DBDirectClient we want to associate the RecoveryUnit
@@ -240,9 +250,14 @@ namespace mongo {
             resultFlags = ResultFlag_CursorNotFound;
         }
         else {
-            // Quote: check for spoofing of the ns such that it does not match the one originally
-            // there for the cursor
-            uassert(17011, "auth error", str::equals(ns, cc->ns().c_str()));
+            // Check for spoofing of the ns such that it does not match the one originally
+            // there for the cursor.
+            if (globalCursorManager->ownsCursorId(cursorid)) {
+                // TODO Implement auth check for global cursors.  SERVER-16657.
+            }
+            else {
+                uassert(17011, "auth error", str::equals(ns, cc->ns().c_str()));
+            }
             *isCursorAuthorized = true;
 
             // Restore the RecoveryUnit if we need to.
@@ -254,7 +269,7 @@ namespace mongo {
                 if (!cc->hasRecoveryUnit()) {
                     // Start using a new RecoveryUnit
                     cc->setOwnedRecoveryUnit(
-                        getGlobalEnvironment()->getGlobalStorageEngine()->newRecoveryUnit(txn));
+                        getGlobalEnvironment()->getGlobalStorageEngine()->newRecoveryUnit());
 
                 }
                 // Swap RecoveryUnit(s) between the ClientCursor and OperationContext.
@@ -275,7 +290,7 @@ namespace mongo {
                 cc->updateSlaveLocation(txn, curop); 
             }
 
-            if (cc->isAggCursor) {
+            if (cc->isAggCursor()) {
                 // Agg cursors handle their own locking internally.
                 ctx.reset(); // unlocks
             }
@@ -329,9 +344,9 @@ namespace mongo {
             // to getNext(...) might just return EOF).
             bool saveClientCursor = false;
 
-            if (PlanExecutor::DEAD == state || PlanExecutor::EXEC_ERROR == state) {
+            if (PlanExecutor::DEAD == state || PlanExecutor::FAILURE == state) {
                 // Propagate this error to caller.
-                if (PlanExecutor::EXEC_ERROR == state) {
+                if (PlanExecutor::FAILURE == state) {
                     scoped_ptr<PlanStageStats> stats(exec->getStats());
                     error() << "Plan executor error, stats: "
                             << Explain::statsToBSON(*stats);
@@ -457,7 +472,7 @@ namespace mongo {
                           "$gt or $gte over the 'ts' field.");
         }
 
-        RecordId startLoc = RecordId().setInvalid();
+        boost::optional<RecordId> startLoc = boost::none;
 
         // See if the RecordStore supports the oplogStartHack
         const BSONElement tsElem = extractOplogTsOptime(tsExpr);
@@ -468,7 +483,7 @@ namespace mongo {
             }
         }
 
-        if (startLoc.isValid()) {
+        if (startLoc) {
             LOG(3) << "Using direct oplog seek";
         }
         else {
@@ -486,7 +501,8 @@ namespace mongo {
             scoped_ptr<PlanExecutor> exec(rawExec);
 
             // The stage returns a RecordId of where to start.
-            PlanExecutor::ExecState state = exec->getNext(NULL, &startLoc);
+            startLoc = RecordId();
+            PlanExecutor::ExecState state = exec->getNext(NULL, startLoc.get_ptr());
 
             // This is normal.  The start of the oplog is the beginning of the collection.
             if (PlanExecutor::IS_EOF == state) {
@@ -506,7 +522,7 @@ namespace mongo {
         // Build our collection scan...
         CollectionScanParams params;
         params.collection = collection;
-        params.start = startLoc;
+        params.start = *startLoc;
         params.direction = CollectionScanParams::FORWARD;
         params.tailable = cq->getParsed().getOptions().tailable;
 
@@ -588,6 +604,7 @@ namespace mongo {
         // Parse, canonicalize, plan, transcribe, and get a plan executor.
         PlanExecutor* rawExec = NULL;
 
+        ScopedTransaction scopedXact(txn, MODE_IS);
         AutoGetCollectionForRead ctx(txn, nss);
 
         const int dbProfilingLevel = (ctx.getDb() != NULL) ? ctx.getDb()->getProfilingLevel() :
@@ -755,7 +772,7 @@ namespace mongo {
         exec->deregisterExec();
 
         // Caller expects exceptions thrown in certain cases.
-        if (PlanExecutor::EXEC_ERROR == state) {
+        if (PlanExecutor::FAILURE == state) {
             scoped_ptr<PlanStageStats> stats(exec->getStats());
             error() << "Plan executor error, stats: "
                     << Explain::statsToBSON(*stats);
@@ -822,7 +839,7 @@ namespace mongo {
 
             // Allocate a new ClientCursor.  We don't have to worry about leaking it as it's
             // inserted into a global map by its ctor.
-            ClientCursor* cc = new ClientCursor(collection, exec.get(),
+            ClientCursor* cc = new ClientCursor(collection->cursorManager(), exec.get(),
                                                 pq.getOptions().toInt(),
                                                 pq.getFilter());
             ccId = cc->cursorid();
@@ -839,7 +856,7 @@ namespace mongo {
                 // getMore requests.  The calling OpCtx gets a fresh RecoveryUnit.
                 cc->setOwnedRecoveryUnit(txn->releaseRecoveryUnit());
                 StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
-                txn->setRecoveryUnit(storageEngine->newRecoveryUnit(txn));
+                txn->setRecoveryUnit(storageEngine->newRecoveryUnit());
             }
 
             QLOG() << "caching executor with cursorid " << ccId

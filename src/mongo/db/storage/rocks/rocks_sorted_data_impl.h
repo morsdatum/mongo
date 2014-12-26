@@ -31,6 +31,7 @@
 #include "mongo/db/storage/sorted_data_interface.h"
 
 #include <atomic>
+#include <string>
 
 #include <rocksdb/db.h>
 
@@ -82,6 +83,11 @@ namespace mongo {
         virtual void fullValidate(OperationContext* txn, bool full, long long* numKeysOut,
                                   BSONObjBuilder* output) const;
 
+        virtual bool appendCustomStats(OperationContext* txn, BSONObjBuilder* output, double scale)
+            const {
+            return false;
+        }
+
         virtual bool isEmpty(OperationContext* txn);
 
         virtual Status touch(OperationContext* txn) const;
@@ -101,7 +107,7 @@ namespace mongo {
         static rocksdb::Comparator* newRocksComparator( const Ordering& order );
 
     private:
-        static uint64_t _hash(uint64_t identHash, const BSONObj& key);
+        std::string _getTransactionID(const BSONObj& key) const;
 
         rocksdb::DB* _db; // not owned
 
@@ -110,7 +116,6 @@ namespace mongo {
         boost::shared_ptr<rocksdb::ColumnFamilyHandle> _columnFamily;
 
         std::string _ident;
-        uint64_t _identHash;
 
         // used to construct RocksCursors
         const Ordering _order;

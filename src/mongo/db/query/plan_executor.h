@@ -71,7 +71,7 @@ namespace mongo {
             // If the underlying PlanStage has any information on the error, it will be available in
             // the objOut parameter. Call WorkingSetCommon::toStatusString() to retrieve the error
             // details from the output BSON object.
-            EXEC_ERROR,
+            FAILURE,
         };
 
         /**
@@ -270,7 +270,7 @@ namespace mongo {
         //
 
         /**
-         * Register this plan executor with the collection cursor cache so that it
+         * Register this plan executor with the collection cursor manager so that it
          * receives notifications for events that happen while yielding any locks.
          *
          * Deregistration happens automatically when this plan executor is destroyed.

@@ -155,7 +155,7 @@ compare_srcfile(tmp_file, f)
 f='../src/config/config_def.c'
 tfile = open(tmp_file, 'w')
 
-tfile.write('''/* DO NOT EDIT: automatically built by dist/config.py. */
+tfile.write('''/* DO NOT EDIT: automatically built by dist/api_config.py. */
 
 #include "wt_internal.h"
 ''')
@@ -188,6 +188,8 @@ def get_default(c):
     t = gettype(c)
     if c.default == 'false':
         return '0'
+    elif t == 'string' and c.default == 'none':
+        return ''
     elif t == 'category':
         return '(%s)' % (','.join('%s=%s' % (subc.name, get_default(subc))
             for subc in sorted(c.subconfig)))
