@@ -45,6 +45,7 @@
 
 #include <boost/shared_ptr.hpp>
 #include <ctype.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <iostream>
 #include <map>
@@ -592,6 +593,10 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 }
 #else
 int main(int argc, char* argv[], char** envp) {
+    unsetenv("LANG");
+    unsetenv("LANGUAGE");
+    setenv("LC_ALL","C",1);
+  
     int exitCode = toolMain(argc, argv, envp);
     mongo::quickExit(exitCode);
 }

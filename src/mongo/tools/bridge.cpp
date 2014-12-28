@@ -31,7 +31,7 @@
 #include "mongo/pch.h"
 
 #include <boost/thread.hpp>
-
+#include <cstdlib>
 #include "mongo/base/initializer.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/dbmessage.h"
@@ -193,6 +193,10 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 }
 #else
 int main(int argc, char* argv[], char** envp) {
+    unsetenv("LANG");
+    unsetenv("LANGUAGE");
+    setenv("LC_ALL","C",1);
+  
     int exitCode = toolMain(argc, argv, envp);
     quickExit(exitCode);
 }

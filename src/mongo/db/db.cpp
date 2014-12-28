@@ -37,7 +37,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
-
+#include <cstdlib>
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
@@ -670,6 +670,9 @@ int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
 }
 #else
 int main(int argc, char* argv[], char** envp) {
+    unsetenv("LANG");
+    unsetenv("LANGUAGE");
+    setenv("LC_ALL","C",1);
     int exitCode = mongoDbMain(argc, argv, envp);
     quickExit(exitCode);
 }
