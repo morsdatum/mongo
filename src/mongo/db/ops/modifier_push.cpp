@@ -648,7 +648,7 @@ namespace mongo {
             }
 
             const int64_t numChildren = mutablebson::countChildren(_preparedState->elemFound);
-            int64_t countRemoved = std::max(static_cast<int64_t>(0), numChildren - abs(_slice));
+            int64_t countRemoved = std::max(static_cast<int64_t>(0), numChildren - (_slice >=0 ? _slice : -_slice));
 
             // If _slice is negative, remove from the bottom, otherwise from the top
             const bool removeFromEnd = (_slice > 0);

@@ -11,7 +11,7 @@ Import("has_option")
 Import("get_option")
 Import("usev8")
 Import("v8suffix")
-Import("darwin windows solaris linux nix")
+Import("darwin windows solaris linux freebsd nix")
 Import("wiredtiger")
 
 # Boost we need everywhere. 's2' is spammed in all over the place by
@@ -1229,7 +1229,7 @@ if windows:
 def installBinary( e, name ):
     name = add_exe( name )
 
-    if (solaris or linux) and (not has_option("nostrip")):
+    if (solaris or linux or freebsd) and (not has_option("nostrip")):
         name = e.Command('stripped/%s' % name, name, Copy('$TARGET', '$SOURCE'))[0]
         e.AddPostAction(name, 'strip $TARGET')
 
