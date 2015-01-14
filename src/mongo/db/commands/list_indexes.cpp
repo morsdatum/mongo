@@ -37,7 +37,7 @@
 #include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/exec/mock_stage.h"
+#include "mongo/db/exec/queued_data_stage.h"
 #include "mongo/db/exec/working_set.h"
 #include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/query/find_constants.h"
@@ -100,6 +100,15 @@ namespace mongo {
                               << "not the empty string",
                 !ns.coll().empty());
 
+            const long long defaultBatchSize = std::numeric_limits<long long>::max();
+            long long batchSize;
+            Status parseCursorStatus = parseCommandCursorOptions(cmdObj,
+                                                                 defaultBatchSize,
+                                                                 &batchSize);
+            if (!parseCursorStatus.isOK()) {
+                return appendCommandStatus(result, parseCursorStatus);
+            }
+
             AutoGetCollectionForRead autoColl(txn, ns);
             if (!autoColl.getDb()) {
                 return appendCommandStatus( result, Status( ErrorCodes::NamespaceNotFound,
@@ -119,7 +128,7 @@ namespace mongo {
             cce->getAllIndexes( txn, &indexNames );
 
             std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            std::auto_ptr<MockStage> root(new MockStage(ws.get()));
+            std::auto_ptr<QueuedDataStage> root(new QueuedDataStage(ws.get()));
 
             for ( size_t i = 0; i < indexNames.size(); i++ ) {
                 BSONObj indexSpec = cce->getIndexSpec( txn, indexNames[i] );
@@ -133,7 +142,11 @@ namespace mongo {
                 root->pushBack(*member);
             }
 
-            std::string cursorNamespace = str::stream() << dbname << ".$cmd." << name;
+            std::string cursorNamespace = str::stream() << dbname << ".$cmd." << name << "."
+                                                        << ns.coll();
+            dassert(NamespaceString(cursorNamespace).isValid());
+            dassert(NamespaceString(cursorNamespace).isListIndexesGetMore());
+            dassert(ns == NamespaceString(cursorNamespace).getTargetNSForListIndexesGetMore());
 
             PlanExecutor* rawExec;
             Status makeStatus = PlanExecutor::make(txn,
@@ -147,16 +160,11 @@ namespace mongo {
                 return appendCommandStatus( result, makeStatus );
             }
 
-            BSONElement batchSizeElem = cmdObj.getFieldDotted("cursor.batchSize");
-            const long long batchSize = batchSizeElem.isNumber()
-                                        ? batchSizeElem.numberLong()
-                                        : -1;
-
             BSONArrayBuilder firstBatch;
 
             const int byteLimit = MaxBytesToReturnToClientAtOnce;
-            for (int objCount = 0;
-                 firstBatch.len() < byteLimit && (batchSize == -1 || objCount < batchSize);
+            for (long long objCount = 0;
+                 objCount < batchSize && firstBatch.len() < byteLimit;
                  objCount++) {
                 BSONObj next;
                 PlanExecutor::ExecState state = exec->getNext(&next, NULL);
@@ -171,7 +179,8 @@ namespace mongo {
             if ( !exec->isEOF() ) {
                 exec->saveState();
                 ClientCursor* cursor = new ClientCursor(CursorManager::getGlobalCursorManager(),
-                                                        exec.release());
+                                                        exec.release(),
+                                                        cursorNamespace);
                 cursorId = cursor->cursorid();
 
                 cursor->setOwnedRecoveryUnit(txn->releaseRecoveryUnit());

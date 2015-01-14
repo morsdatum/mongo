@@ -33,9 +33,11 @@
 
 #include "mongo/shell/shell_utils_launcher.h"
 
+#include <boost/scoped_array.hpp>
 #include <boost/thread/thread.hpp>
 #include <iostream>
 #include <map>
+#include <signal.h>
 #include <vector>
 
 #ifdef _WIN32
@@ -60,6 +62,8 @@
 #include "mongo/util/signal_win32.h"
 
 namespace mongo {
+
+    using boost::scoped_array;
 
     extern bool dbexitCalled;
 

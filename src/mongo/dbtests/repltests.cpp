@@ -40,8 +40,8 @@
 #include "mongo/db/json.h"
 #include "mongo/db/repl/master_slave.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
-#include "mongo/db/repl/repl_coordinator_mock.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/repl/sync.h"
 #include "mongo/db/ops/update.h"
 #include "mongo/db/catalog/collection.h"
@@ -79,7 +79,7 @@ namespace ReplTests {
             Client::WriteContext ctx(&_txn, ns());
             WriteUnitOfWork wuow(&_txn);
 
-            Collection* c = ctx.ctx().db()->getCollection(&_txn, ns());
+            Collection* c = ctx.ctx().db()->getCollection(ns());
             if ( ! c ) {
                 c = ctx.ctx().db()->createCollection(&_txn, ns());
             }
@@ -135,7 +135,7 @@ namespace ReplTests {
             Lock::GlobalWrite lk(_txn.lockState());
             Client::Context ctx(&_txn,  ns() );
             Database* db = ctx.db();
-            Collection* coll = db->getCollection( &_txn, ns() );
+            Collection* coll = db->getCollection( ns() );
             if ( !coll ) {
                 WriteUnitOfWork wunit(&_txn);
                 coll = db->createCollection( &_txn, ns() );
@@ -156,7 +156,7 @@ namespace ReplTests {
             Client::Context ctx(&_txn,  cllNS() );
 
             Database* db = ctx.db();
-            Collection* coll = db->getCollection( &_txn, cllNS() );
+            Collection* coll = db->getCollection( cllNS() );
             if ( !coll ) {
                 WriteUnitOfWork wunit(&_txn);
                 coll = db->createCollection( &_txn, cllNS() );
@@ -178,7 +178,7 @@ namespace ReplTests {
             {
                 Client::Context ctx(&_txn,  cllNS() );
                 Database* db = ctx.db();
-                Collection* coll = db->getCollection( &_txn, cllNS() );
+                Collection* coll = db->getCollection( cllNS() );
 
                 RecordIterator* it = coll->getIterator(&_txn);
                 while ( !it->isEOF() ) {
@@ -209,7 +209,7 @@ namespace ReplTests {
             Client::Context ctx(&_txn,  ns );
 
             Database* db = ctx.db();
-            Collection* coll = db->getCollection( &_txn, ns );
+            Collection* coll = db->getCollection( ns );
             if ( !coll ) {
                 WriteUnitOfWork wunit(&_txn);
                 coll = db->createCollection( &_txn, ns );
@@ -231,7 +231,7 @@ namespace ReplTests {
             Client::Context ctx(&_txn,  ns );
             WriteUnitOfWork wunit(&_txn);
             Database* db = ctx.db();
-            Collection* coll = db->getCollection( &_txn, ns );
+            Collection* coll = db->getCollection( ns );
             if ( !coll ) {
                 coll = db->createCollection( &_txn, ns );
             }
@@ -253,7 +253,7 @@ namespace ReplTests {
             Client::Context ctx(&_txn,  ns() );
             WriteUnitOfWork wunit(&_txn);
             Database* db = ctx.db();
-            Collection* coll = db->getCollection( &_txn, ns() );
+            Collection* coll = db->getCollection( ns() );
             if ( !coll ) {
                 coll = db->createCollection( &_txn, ns() );
             }

@@ -32,6 +32,9 @@
 
 #pragma once
 
+#include <boost/noncopyable.hpp>
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_field.h"
 #include "mongo/client/export_macros.h"

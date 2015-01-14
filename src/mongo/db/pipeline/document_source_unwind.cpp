@@ -26,7 +26,10 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/document.h"
@@ -35,6 +38,8 @@
 #include "mongo/db/pipeline/value.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     /** Helper class to unwind array from a single document. */
     class DocumentSourceUnwind::Unwinder {

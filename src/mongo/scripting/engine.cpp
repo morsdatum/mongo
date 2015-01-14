@@ -35,6 +35,9 @@
 
 #include <cctype>
 #include <boost/filesystem/operations.hpp>
+#include <boost/scoped_array.hpp>
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/client/dbclientinterface.h"
@@ -45,6 +48,10 @@
 #include "mongo/util/text.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
+    using boost::shared_ptr;
+
     long long Scope::_lastVersion = 1;
 
 namespace {
@@ -134,7 +141,7 @@ namespace {
             for (boost::filesystem::directory_iterator it (p); it != end; it++) {
                 empty = false;
                 boost::filesystem::path sub(*it);
-                if (!endsWith(sub.string().c_str(), ".js"))
+                if (!str::endsWith(sub.string().c_str(), ".js"))
                     continue;
                 if (!execFile(sub.string(), printResult, reportError, timeoutMs))
                     return false;

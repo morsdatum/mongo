@@ -28,10 +28,16 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include <boost/thread.hpp>
+
 #include <cstdlib>
+#include <iostream>
+#include <signal.h>
 #include "mongo/base/initializer.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/dbmessage.h"

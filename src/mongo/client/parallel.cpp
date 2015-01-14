@@ -34,6 +34,8 @@
 
 #include "mongo/client/parallel.h"
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/client/dbclient_rs.h"
@@ -50,6 +52,8 @@
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using boost::shared_ptr;
 
     LabeledLevel pc( "pcursor", 2 );
 
@@ -558,6 +562,7 @@ namespace mongo {
             // If the replica set connection believes that it has a valid primary that is up,
             // confirm that the replica set monitor agrees that the suspected primary is indeed up.
             const DBClientReplicaSet* replConn = dynamic_cast<const DBClientReplicaSet*>(rawConn);
+            invariant(replConn);
             ReplicaSetMonitorPtr rsMonitor = ReplicaSetMonitor::get(replConn->getSetName());
             if (!rsMonitor->isHostUp(replConn->getSuspectedPrimaryHostAndPort())) {
                 connIsDown = true;

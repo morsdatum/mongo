@@ -31,12 +31,15 @@
 
 #pragma once
 
+#include <boost/noncopyable.hpp>
+
 #include "mongo/db/client.h"
 #include "mongo/db/server_options.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/concurrency/spin_lock.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/progress_meter.h"
+#include "mongo/util/thread_safe_string.h"
 #include "mongo/util/time_support.h"
 
 
@@ -165,6 +168,7 @@ namespace mongo {
         bool fastmodinsert;  // upsert of an $operation. builds a default object
         bool upsert;         // true if the update actually did an insert
         int keyUpdates;
+        int writeConflicts;
         ThreadSafeString planSummary; // a brief std::string describing the query solution
 
         // New Query Framework debugging/profiling info

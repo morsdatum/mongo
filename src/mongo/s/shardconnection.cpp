@@ -30,8 +30,12 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kSharding
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
+#include <boost/noncopyable.hpp>
 #include <set>
 
 #include "mongo/db/auth/authorization_manager.h"
@@ -46,6 +50,7 @@
 #include "mongo/s/version_manager.h"
 #include "mongo/server.h"
 #include "mongo/util/concurrency/spin_lock.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/stacktrace.h"
 

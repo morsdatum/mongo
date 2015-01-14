@@ -36,6 +36,8 @@
 
 #include <boost/thread/thread.hpp>
 #include <cstdlib>
+#include <iostream>
+
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"

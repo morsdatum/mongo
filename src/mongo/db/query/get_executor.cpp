@@ -48,6 +48,7 @@
 #include "mongo/db/exec/shard_filter.h"
 #include "mongo/db/exec/subplan.h"
 #include "mongo/db/exec/update.h"
+#include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/ops/update_lifecycle.h"
 #include "mongo/db/query/canonical_query.h"
 #include "mongo/db/query/explain.h"
@@ -63,7 +64,7 @@
 #include "mongo/db/query/query_planner.h"
 #include "mongo/db/query/query_planner_common.h"
 #include "mongo/db/query/stage_builder.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/server_parameters.h"
@@ -168,8 +169,13 @@ namespace mongo {
             plannerParams->options |= QueryPlannerParams::INDEX_INTERSECTION;
         }
 
-        plannerParams->options |= QueryPlannerParams::KEEP_MUTATIONS;
         plannerParams->options |= QueryPlannerParams::SPLIT_LIMITED_SORT;
+
+        // Doc-level locking storage engines do not use the invalidation framework, and therefore
+        // have no need for KEEP_MUTATIONS.
+        if (!supportsDocLocking()) {
+            plannerParams->options |= QueryPlannerParams::KEEP_MUTATIONS;
+        }
     }
 
     namespace {

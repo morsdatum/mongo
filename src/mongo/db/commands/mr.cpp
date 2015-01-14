@@ -34,6 +34,8 @@
 
 #include "mongo/db/commands/mr.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/client/connpool.h"
 #include "mongo/client/parallel.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -50,7 +52,7 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/query/query_planner.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/range_preserver.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context_impl.h"
@@ -65,6 +67,8 @@
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     namespace mr {
 
@@ -630,7 +634,7 @@ namespace mongo {
                     {
                         Client::Context tx(txn, _config.outputOptions.finalNamespace);
                         Collection* coll =
-                            tx.db()->getCollection(_txn, _config.outputOptions.finalNamespace);
+                            tx.db()->getCollection(_config.outputOptions.finalNamespace);
                         found = Helpers::findOne(_txn,
                                                  coll,
                                                  temp["_id"].wrap(),
@@ -892,7 +896,7 @@ namespace mongo {
         }
 
         Collection* State::getCollectionOrUassert(Database* db, const StringData& ns) {
-            Collection* out = db ? db->getCollection(_txn, ns) : NULL;
+            Collection* out = db ? db->getCollection(ns) : NULL;
             uassert(18697, "Collection unexpectedly disappeared: " + ns.toString(),
                     out);
             return out;

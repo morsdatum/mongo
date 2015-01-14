@@ -74,7 +74,8 @@ namespace mongo {
 
         // un-used API
         virtual void* writingPtr(void* data, size_t len) { invariant(!"don't call writingPtr"); }
-        virtual void syncDataAndTruncateJournal() {}
+
+        virtual uint64_t getMyTransactionCount() const;
 
         // ---- WT STUFF
 
@@ -104,6 +105,7 @@ namespace mongo {
         bool _defaultCommit;
         int _depth;
         bool _active;
+        uint64_t _myTransactionCount;
         bool _everStartedWrite;
         Timer _timer;
         bool _currentlySquirreled;
@@ -119,13 +121,19 @@ namespace mongo {
      */
     class WiredTigerCursor {
     public:
-        WiredTigerCursor(const std::string& uri, uint64_t uriID, OperationContext* txn);
-        WiredTigerCursor(const std::string& uri, uint64_t uriID, WiredTigerRecoveryUnit* ru);
+        WiredTigerCursor(const std::string& uri,
+                         uint64_t uriID,
+                         bool forRecordStore,
+                         OperationContext* txn);
+        WiredTigerCursor(const std::string& uri,
+                         uint64_t uriID,
+                         bool forRecordStore,
+                         WiredTigerRecoveryUnit* ru);
         ~WiredTigerCursor();
 
 
         WT_CURSOR* get() const {
-            dassert(_session == _ru->getSession());
+            // TODO(SERVER-16816): assertInActiveTxn();
             return _cursor;
         }
 
@@ -139,7 +147,10 @@ namespace mongo {
         void assertInActiveTxn() const { _ru->assertInActiveTxn(); }
 
     private:
-        void _init( const std::string& uri, uint64_t uriID, WiredTigerRecoveryUnit* ru );
+        void _init( const std::string& uri,
+                    uint64_t uriID,
+                    bool forRecordStore,
+                    WiredTigerRecoveryUnit* ru );
 
         uint64_t _uriID;
         WiredTigerRecoveryUnit* _ru; // not owned

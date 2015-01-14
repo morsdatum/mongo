@@ -28,13 +28,21 @@
 
 // DeadlineMonitor unit tests
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/scripting/v8_deadline_monitor.h"
+
+#include <boost/shared_ptr.hpp>
 
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
+
+    using boost::shared_ptr;
+
     class TaskGroup {
     public:
         TaskGroup() : _m("TestGroup"), _c(), _killCount(0), _targetKillCount(0) { }

@@ -32,6 +32,8 @@
 
 #include "mongo/db/storage/rocks/rocks_sorted_data_impl.h"
 
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
 #include <cstdlib>
 #include <string>
 
@@ -49,6 +51,9 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
+    using boost::shared_ptr;
 
     namespace {
 
@@ -137,10 +142,6 @@ namespace mongo {
 
                 return ( !valid && !otherValid ) ||
                        ( valid && otherValid && _iterator->key() == realOther->_iterator->key() );
-            }
-
-            void aboutToDeleteBucket(const RecordId& bucket) {
-                invariant( !"aboutToDeleteBucket should never be called from RocksSortedDataImpl" );
             }
 
             bool locate(const BSONObj& key, const RecordId& loc) {

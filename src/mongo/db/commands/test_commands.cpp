@@ -71,7 +71,7 @@ namespace mongo {
             WriteUnitOfWork wunit(txn);
             Client::Context ctx(txn,  ns );
             Database* db = ctx.db();
-            Collection* collection = db->getCollection( txn, ns );
+            Collection* collection = db->getCollection( ns );
             if ( !collection ) {
                 collection = db->createCollection( txn, ns );
                 if ( !collection ) {
@@ -190,26 +190,22 @@ namespace mongo {
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
                                                      Database* db, 
                                                      const BSONObj& cmdObj) {
-            std::string coll = cmdObj[ "emptycapped" ].valuestrsafe();
-            std::string ns = db->name() + '.' + coll;
+            const std::string ns = parseNsCollectionRequired(db->name(), cmdObj);
 
             IndexCatalog::IndexKillCriteria criteria;
             criteria.ns = ns;
-            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, ns), criteria);
+            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(ns), criteria);
         }
 
         virtual bool run(OperationContext* txn, const string& dbname , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool fromRepl) {
-            const std::string coll = cmdObj[ "emptycapped" ].valuestrsafe();
-            uassert( 13428, "emptycapped must specify a collection", !coll.empty() );
-
-            const NamespaceString nss( dbname, coll );
+            const std::string ns = parseNsCollectionRequired(dbname, cmdObj);
 
             AutoGetDb autoDb(txn, dbname, MODE_X);
 
             Database* db = autoDb.getDb();
             massert(13429, "no such database", db);
 
-            Collection* collection = db->getCollection(txn, nss.ns());
+            Collection* collection = db->getCollection(ns);
             massert(28584, "no such collection", collection);
 
             std::vector<BSONObj> indexes = stopIndexBuilds(txn, db, cmdObj);
@@ -221,7 +217,7 @@ namespace mongo {
                 return appendCommandStatus(result, status);
             }
 
-            IndexBuilder::restoreIndexes(indexes);
+            IndexBuilder::restoreIndexes(txn, indexes);
 
             if (!fromRepl) {
                 repl::logOp(txn, "c", (dbname + ".$cmd").c_str(), cmdObj);

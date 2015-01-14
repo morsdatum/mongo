@@ -31,6 +31,7 @@
  * so we cannot test it outside of a dbtest.
  */
 
+#include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
@@ -49,6 +50,9 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace QueryStageAnd {
+
+    using boost::scoped_ptr;
+    using boost::shared_ptr;
 
     class QueryStageAndBase {
     public:

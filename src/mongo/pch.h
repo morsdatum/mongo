@@ -33,49 +33,31 @@
 #ifndef MONGO_PCH_H
 #define MONGO_PCH_H
 
+#ifndef MONGO_PCH_WHITELISTED
+#error New uses of mongo/pch.h are prohibited
+#endif
+
 // our #define macros must not be active when we include
 // system headers and boost headers
 #include "mongo/client/undef_macros.h"
 
-#include "mongo/platform/basic.h"
-
-#include <ctime>
 #include <cstring>
-#include <string>
-#include <memory>
-#include <string>
-#include <iostream>
+#include <ctime>
 #include <map>
-#include <vector>
+#include <memory>
 #include <set>
-#include <stdio.h>
-#include <stdlib.h>
-#include <signal.h>
-
-#include <time.h>
-#include <string.h>
-#include <limits.h>
-
+#include <string>
+#include <vector>
 
 #define BOOST_FILESYSTEM_VERSION 3
-#include <boost/shared_ptr.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/version.hpp>
 
 #include "mongo/client/redef_macros.h"
-
-#include "mongo/client/export_macros.h"
 
 namespace mongo {
 
     using namespace std;
-    using boost::shared_ptr;
 }
 
-
-#include "mongo/util/assert_util.h"
 #include "mongo/util/debug_util.h"
-#include "mongo/util/goodies.h"
-#include "mongo/util/allocator.h"
 
 #endif // MONGO_PCH_H

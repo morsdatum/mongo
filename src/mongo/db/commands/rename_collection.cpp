@@ -44,7 +44,7 @@
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/ops/insert.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
@@ -77,7 +77,7 @@ namespace mongo {
             IndexCatalog::IndexKillCriteria criteria;
             criteria.ns = source;
             std::vector<BSONObj> prelim = 
-                IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, source), criteria);
+                IndexBuilder::killMatchingIndexBuilds(db->getCollection(source), criteria);
 
             std::vector<BSONObj> indexes;
 
@@ -91,10 +91,6 @@ namespace mongo {
             }
 
             return indexes;
-        }
-
-        virtual void restoreIndexBuildsOnSource(std::vector<BSONObj> indexesInProg, std::string source) {
-            IndexBuilder::restoreIndexes( indexesInProg );
         }
 
         static void dropCollection(OperationContext* txn, Database* db, StringData collName) {
@@ -168,7 +164,7 @@ namespace mongo {
             }
 
             Database* const sourceDB = dbHolder().get(txn, nsToDatabase(source));
-            Collection* const sourceColl = sourceDB ? sourceDB->getCollection(txn, source)
+            Collection* const sourceColl = sourceDB ? sourceDB->getCollection(source)
                                                     : NULL;
             if (!sourceColl) {
                 errmsg = "source namespace does not exist";
@@ -203,7 +199,9 @@ namespace mongo {
 
             const std::vector<BSONObj> indexesInProg = stopIndexBuilds(txn, sourceDB, cmdObj);
             // Dismissed on success
-            ScopeGuard indexBuildRestorer = MakeGuard(IndexBuilder::restoreIndexes, indexesInProg);
+            ScopeGuard indexBuildRestorer = MakeGuard(IndexBuilder::restoreIndexes,
+                                                      txn,
+                                                      indexesInProg);
 
             Database* const targetDB = dbHolder().openDb(txn, nsToDatabase(target));
 
@@ -212,7 +210,7 @@ namespace mongo {
 
                 // Check if the target namespace exists and if dropTarget is true.
                 // If target exists and dropTarget is not true, return false.
-                if (targetDB->getCollection(txn, target)) {
+                if (targetDB->getCollection(target)) {
                     if (!cmdObj["dropTarget"].trueValue()) {
                         errmsg = "target namespace exists";
                         return false;

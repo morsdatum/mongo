@@ -86,6 +86,18 @@ namespace mongo {
         return first.String();
     }
 
+    string Command::parseNsCollectionRequired(const string& dbname, const BSONObj& cmdObj) const {
+        // Accepts both BSON String and Symbol for collection name per SERVER-16260
+        // TODO(kangas) remove Symbol support in MongoDB 3.0 after Ruby driver audit
+        BSONElement first = cmdObj.firstElement();
+        uassert(17009,
+                "no collection name specified",
+                first.canonicalType() == canonicalizeBSONType(mongo::String)
+                && first.valuestrsize() > 0);
+        std::string coll = first.valuestr();
+        return dbname + '.' + coll;
+    }
+
     /*virtual*/ string Command::parseNs(const string& dbname, const BSONObj& cmdObj) const {
         BSONElement first = cmdObj.firstElement();
         if (first.type() != mongo::String)
@@ -160,7 +172,7 @@ namespace mongo {
                         ss << *q++;
                     ss << "\">";
                     q = p;
-                    if( startsWith(q, "http://www.mongodb.org/display/") )
+                    if( str::startsWith(q, "http://www.mongodb.org/display/") )
                         q += 31;
                     while( *q && *q != ' ' && *q != '\n' ) {
                         ss << (*q == '+' ? ' ' : *q);
@@ -249,6 +261,46 @@ namespace mongo {
         return mongo::getStatusFromCommandResult(result);
     }
 
+    Status Command::parseCommandCursorOptions(const BSONObj& cmdObj,
+                                              long long defaultBatchSize,
+                                              long long* batchSize) {
+        invariant(batchSize);
+        *batchSize = defaultBatchSize;
+
+        BSONElement cursorElem = cmdObj["cursor"];
+        if (cursorElem.eoo()) {
+            return Status::OK();
+        }
+
+        if (cursorElem.type() != mongo::Object) {
+            return Status(ErrorCodes::TypeMismatch, "cursor field must be missing or an object");
+        }
+
+        BSONObj cursor = cursorElem.embeddedObject();
+        BSONElement batchSizeElem = cursor["batchSize"];
+        if (batchSizeElem.eoo()) {
+            if (!cursor.isEmpty()) {
+                return Status(ErrorCodes::BadValue,
+                              "cursor object can't contain fields other than batchSize");
+            }
+
+            return Status::OK();
+        }
+
+        if (!batchSizeElem.isNumber()) {
+            return Status(ErrorCodes::TypeMismatch, "cursor.batchSize must be a number");
+        }
+
+        // This can change in the future, but for now all negatives are reserved.
+        if (batchSizeElem.numberLong() < 0) {
+            return Status(ErrorCodes::BadValue, "cursor.batchSize must not be negative");
+        }
+
+        *batchSize = batchSizeElem.numberLong();
+
+        return Status::OK();
+    }
+
     void Command::appendCursorResponseObject(long long cursorId,
                                              StringData cursorNamespace,
                                              BSONArray firstBatch,
@@ -332,7 +384,7 @@ namespace mongo {
             log(LogComponent::kAccessControl) << status << std::endl;
         }
         audit::logCommandAuthzCheck(client,
-                                    NamespaceString(c->parseNs(dbname, cmdObj)),
+                                    dbname,
                                     cmdObj,
                                     c,
                                     status.code());

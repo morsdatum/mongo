@@ -30,7 +30,12 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
+
+#include <boost/scoped_ptr.hpp>
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/auth/authorization_manager.h"
@@ -42,10 +47,11 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/util/goodies.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
 namespace {
     void _appendUserInfo(const CurOp& c,
@@ -167,7 +173,7 @@ namespace {
                                              string* errmsg ) {
         fassert(16372, db);
         const char* profileName = db->getProfilingNS();
-        Collection* collection = db->getCollection( txn, profileName );
+        Collection* collection = db->getCollection( profileName );
 
         if ( collection ) {
             if ( !collection->isCapped() ) {

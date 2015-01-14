@@ -26,9 +26,15 @@
 *    it in the license file.
 */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document_source.h"
+
+#include <boost/make_shared.hpp>
+#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/document.h"
@@ -37,6 +43,10 @@
 #include "mongo/db/pipeline/value.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
+    using boost::scoped_ptr;
+
     const char DocumentSourceSort::sortName[] = "$sort";
 
     const char *DocumentSourceSort::getSourceName() const {

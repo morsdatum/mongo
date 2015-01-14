@@ -30,12 +30,16 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/stats/snapshots.h"
 
 #include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 
 /**

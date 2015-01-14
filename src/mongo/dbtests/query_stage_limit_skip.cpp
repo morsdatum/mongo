@@ -30,10 +30,12 @@
  * This file tests db/exec/limit.cpp and db/exec/skip.cpp.
  */
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/exec/limit.h"
-#include "mongo/db/exec/mock_stage.h"
 #include "mongo/db/exec/plan_stage.h"
+#include "mongo/db/exec/queued_data_stage.h"
 #include "mongo/db/exec/skip.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/json.h"
@@ -43,11 +45,13 @@ using namespace mongo;
 
 namespace {
 
+    using boost::scoped_ptr;
+
     static const int N = 50;
 
-    /* Populate a MockStage and return it.  Caller owns it. */
-    MockStage* getMS(WorkingSet* ws) {
-        auto_ptr<MockStage> ms(new MockStage(ws));
+    /* Populate a QueuedDataStage and return it.  Caller owns it. */
+    QueuedDataStage* getMS(WorkingSet* ws) {
+        auto_ptr<QueuedDataStage> ms(new QueuedDataStage(ws));
 
         // Put N ADVANCED results into the mock stage, and some other stalling results (YIELD/TIME).
         for (int i = 0; i < N; ++i) {

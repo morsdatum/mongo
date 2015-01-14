@@ -34,6 +34,7 @@
 #include <set>
 #include <string>
 
+#include <boost/scoped_ptr.hpp>
 #include <boost/thread/mutex.hpp>
 
 #include "mongo/db/catalog/collection_options.h"
@@ -52,6 +53,13 @@ namespace mongo {
 
     class WiredTigerRecordStore : public RecordStore {
     public:
+
+        /**
+         * During record store creation, if size storer reports a record count under
+         * 'kCollectionScanOnCreationThreshold', perform a collection scan to update size storer
+         * as well as internal record and data size counters.
+         */
+        static const long long kCollectionScanOnCreationThreshold;
 
         /**
          * Creates a configuration string suitable for 'config' parameter in WT_SESSION::create().
@@ -116,6 +124,8 @@ namespace mongo {
                                                   bool enforceQuota,
                                                   UpdateMoveNotifier* notifier );
 
+        virtual bool updateWithDamagesSupported() const;
+
         virtual Status updateWithDamages( OperationContext* txn,
                                           const RecordId& loc,
                                           const RecordData& oldRec,
@@ -143,7 +153,7 @@ namespace mongo {
                                  bool scanData,
                                  ValidateAdaptor* adaptor,
                                  ValidateResults* results,
-                                 BSONObjBuilder* output ) const;
+                                 BSONObjBuilder* output );
 
         virtual void appendCustomStats( OperationContext* txn,
                                         BSONObjBuilder* result,
@@ -212,7 +222,7 @@ namespace mongo {
             RecoveryUnit* _savedRecoveryUnit; // only used to sanity check between save/restore
             const bool _forward;
             bool _forParallelCollectionScan;
-            scoped_ptr<WiredTigerCursor> _cursor;
+            boost::scoped_ptr<WiredTigerCursor> _cursor;
             bool _eof;
             const RecordId _readUntilForOplog;
 
@@ -235,7 +245,7 @@ namespace mongo {
         void _setId(RecordId loc);
         bool cappedAndNeedDelete() const;
         void cappedDeleteAsNeeded(OperationContext* txn, const RecordId& justInserted );
-        void _changeNumRecords(OperationContext* txn, bool insert);
+        void _changeNumRecords(OperationContext* txn, int64_t diff);
         void _increaseDataSize(OperationContext* txn, int amount);
         RecordData _getData( const WiredTigerCursor& cursor) const;
         StatusWith<RecordId> extractAndCheckLocForOplog(const char* data, int len);

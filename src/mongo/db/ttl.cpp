@@ -48,9 +48,10 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/ops/delete.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/util/background.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
@@ -99,7 +100,7 @@ namespace mongo {
                 // if part of replSet but not in a readable state (e.g. during initial sync), skip.
                 if (repl::getGlobalReplicationCoordinator()->getReplicationMode() ==
                         repl::ReplicationCoordinator::modeReplSet &&
-                        !repl::getGlobalReplicationCoordinator()->getCurrentMemberState().readable())
+                        !repl::getGlobalReplicationCoordinator()->getMemberState().readable())
                     continue;
 
                 set<string> dbs;
@@ -155,7 +156,7 @@ namespace mongo {
 
                 string ns = *it;
                 Lock::CollectionLock collLock( txn->lockState(), ns, MODE_IS );
-                CollectionCatalogEntry* coll = dbEntry->getCollectionCatalogEntry( txn, ns );
+                CollectionCatalogEntry* coll = dbEntry->getCollectionCatalogEntry( ns );
 
                 if ( !coll ) {
                     continue;  // skip since collection not found in catalog
@@ -219,7 +220,7 @@ namespace mongo {
 
                 Lock::CollectionLock collLock( txn->lockState(), ns, MODE_IX );
 
-                Collection* collection = db->getCollection( txn, ns );
+                Collection* collection = db->getCollection( ns );
                 if ( !collection ) {
                     // collection was dropped
                     return true;

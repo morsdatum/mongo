@@ -28,6 +28,8 @@
 
 #include "mongo/db/ops/update_driver.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/mutable/algorithm.h"
@@ -46,6 +48,7 @@ namespace mongo {
     namespace str = mongoutils::str;
     namespace mb = mongo::mutablebson;
 
+    using boost::scoped_ptr;
     using pathsupport::EqualityMatches;
 
     UpdateDriver::UpdateDriver(const Options& opts)
@@ -218,7 +221,8 @@ namespace mongo {
     Status UpdateDriver::update(const StringData& matchedField,
                                 mutablebson::Document* doc,
                                 BSONObj* logOpRec,
-                                FieldRefSet* updatedFields) {
+                                FieldRefSet* updatedFields,
+                                bool* docWasModified) {
         // TODO: assert that update() is called at most once in a !_multi case.
 
         // Use the passed in FieldRefSet
@@ -232,7 +236,7 @@ namespace mongo {
             targetFields = targetFieldScopedPtr.get();
         }
 
-        _affectIndices = false;
+        _affectIndices = (isDocReplacement() && (_indexedFields != NULL));
 
         _logDoc.reset();
         LogBuilder logBuilder(_logDoc.root());
@@ -294,6 +298,10 @@ namespace mongo {
 
             if (!execInfo.noOp) {
                 status = (*it)->apply();
+
+                if (docWasModified)
+                    *docWasModified = true;
+
                 if (!status.isOK()) {
                     return status;
                 }

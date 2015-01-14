@@ -28,13 +28,18 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document.h"
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/dbtests/dbtests.h"
 
 namespace ExpressionTests {
+
+    using boost::intrusive_ptr;
 
     /** Convert BSONObj to a BSONObj with our $const wrappings. */
     static BSONObj constify(const BSONObj& obj, bool parentIsArray=false) {

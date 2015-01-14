@@ -26,12 +26,17 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/s/shard.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     void DocumentSourceCommandShards::setSource(DocumentSource *pSource) {
         /* this doesn't take a source */

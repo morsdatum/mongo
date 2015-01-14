@@ -45,7 +45,7 @@
 #include "mongo/db/index_builder.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context_impl.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
@@ -76,28 +76,23 @@ namespace mongo {
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
                                                      Database* db,
                                                      const BSONObj& cmdObj) {
-            std::string coll = cmdObj.firstElement().valuestrsafe();
-            std::string ns = db->name() + "." + coll;
+            const std::string ns = parseNsCollectionRequired(db->name(), cmdObj);
 
             IndexCatalog::IndexKillCriteria criteria;
             criteria.ns = ns;
-            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, ns), criteria);
+            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(ns), criteria);
         }
 
         virtual bool run(OperationContext* txn, const string& db, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool fromRepl) {
-            const std::string coll = cmdObj.firstElement().valuestrsafe();
-            if (coll.empty()) {
-                errmsg = "no collection name specified";
-                return false;
-            }
+            const std::string nsToCompact = parseNsCollectionRequired(db, cmdObj);
 
             repl::ReplicationCoordinator* replCoord = repl::getGlobalReplicationCoordinator();
-            if (replCoord->getCurrentMemberState().primary() && !cmdObj["force"].trueValue()) {
+            if (replCoord->getMemberState().primary() && !cmdObj["force"].trueValue()) {
                 errmsg = "will not run compact on an active replica set primary as this is a slow blocking operation. use force:true to force";
                 return false;
             }
 
-            NamespaceString ns(db, coll);
+            NamespaceString ns(nsToCompact);
             if ( !ns.isNormal() ) {
                 errmsg = "bad namespace name";
                 return false;
@@ -145,15 +140,18 @@ namespace mongo {
 
 
             ScopedTransaction transaction(txn, MODE_IX);
-            Lock::DBLock lk(txn->lockState(), db, MODE_X);
-            BackgroundOperation::assertNoBgOpInProgForNs(ns.ns());
-            Client::Context ctx(txn, ns);
+            AutoGetDb autoDb(txn, db, MODE_X);
+            Database* const collDB = autoDb.getDb();
+            Collection* collection = collDB ? collDB->getCollection(ns) : NULL;
 
-            Collection* collection = ctx.db()->getCollection(txn, ns.ns());
-            if( ! collection ) {
+            // If db/collection does not exist, short circuit and return.
+            if ( !collDB || !collection ) {
                 errmsg = "namespace does not exist";
                 return false;
             }
+
+            Client::Context ctx(txn, ns);
+            BackgroundOperation::assertNoBgOpInProgForNs(ns.ns());
 
             if ( collection->isCapped() ) {
                 errmsg = "cannot compact a capped collection";
@@ -162,7 +160,7 @@ namespace mongo {
 
             log() << "compact " << ns << " begin, options: " << compactOptions.toString();
 
-            std::vector<BSONObj> indexesInProg = stopIndexBuilds(txn, ctx.db(), cmdObj);
+            std::vector<BSONObj> indexesInProg = stopIndexBuilds(txn, collDB, cmdObj);
 
             StatusWith<CompactStats> status = collection->compact( txn, &compactOptions );
             if ( !status.isOK() )
@@ -173,7 +171,7 @@ namespace mongo {
 
             log() << "compact " << ns << " end";
 
-            IndexBuilder::restoreIndexes(indexesInProg);
+            IndexBuilder::restoreIndexes(txn, indexesInProg);
 
             return true;
         }

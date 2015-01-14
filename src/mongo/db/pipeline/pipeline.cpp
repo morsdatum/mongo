@@ -26,7 +26,10 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 // This file defines functions from both of these headers
 #include "mongo/db/pipeline/pipeline.h"
@@ -44,6 +47,8 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     const char Pipeline::commandName[] = "aggregate";
     const char Pipeline::pipelineName[] = "pipeline";

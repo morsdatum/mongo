@@ -33,13 +33,17 @@
 #include <sstream>
 #include <vector>
 
+#include <boost/noncopyable.hpp>
 #include <boost/thread/xtime.hpp>
 
 #include "mongo/client/export_macros.h"
 #include "mongo/util/concurrency/rwlock.h"
-#include "mongo/util/goodies.h"
 
 namespace mongo {
+
+#if !defined(_WIN32)
+    typedef int HANDLE;
+#endif
 
     extern const size_t g_minOSPageSizeBytes;
     void minOSPageSizeBytesTest(size_t minOSPageSizeBytes);  // lame-o

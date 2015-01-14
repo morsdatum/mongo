@@ -31,7 +31,12 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
+
+#include <iostream>
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/jsobj.h"
@@ -804,6 +809,9 @@ namespace JsobjTests {
 
                 b.append( "g" , -123.456 );
 
+                b.append( "h" , 0.0 );
+                b.append( "i" , -0.0 );
+
                 BSONObj x = b.obj();
                 keyTest(x);
 
@@ -817,6 +825,8 @@ namespace JsobjTests {
 
                 ASSERT_EQUALS( "-123.456" , x["g"].toString( false , true ) );
 
+                ASSERT_EQUALS( "0.0" , x["h"].toString( false , true ) );
+                ASSERT_EQUALS( "-0.0" , x["i"].toString( false , true ) );
             }
         };
 

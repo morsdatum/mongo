@@ -44,9 +44,8 @@ createCollectionWithData = function (db, collectionName, dataGenerator) {
         numIndexes++;
     }
 
-    // Make sure we actually added all the indexes we thing we added.  +1 for the _id index.
-    assert.eq(db.system.indexes.find({"ns" : db.toString() + "." + collection.getName()}).count(),
-              numIndexes + 1);
+    // Make sure we actually added all the indexes we think we added.  +1 for the _id index.
+    assert.eq(collection.getIndexes().length, numIndexes + 1);
 
     var numInserted = 0;
     while (dataGenerator.data.hasNext()) {
@@ -78,7 +77,10 @@ function CollectionDataValidator() {
     this.recordCollectionData = function (collection) {
 
         // Save the indexes for this collection for later comparison
-        indexData = collection.getDB().system.indexes.find({"ns" : collection.getFullName()}).sort({"name":1}).toArray();
+        indexData = collection.getIndexes().sort(function(a,b) {
+            if (a.name > b.name) return 1;
+            else return -1;
+        });
 
         // Save the data for this collection for later comparison
         collectionData = collection.find().sort({"_id":1}).toArray();
@@ -134,10 +136,21 @@ function CollectionDataValidator() {
         delete collectionStats["indexDetails"];
         delete newCollectionStats["indexDetails"];
 
+        // Delete capped:false added in 2.8.0-rc5
+        if (newCollectionStats["capped"] == false) {
+            delete newCollectionStats["capped"];
+        }
+        if (collectionStats["capped"] == false) {
+            delete collectionStats["capped"];
+        }
+
         assert.docEq(collectionStats, newCollectionStats, "collection metadata not equal");
 
         // Get the indexes for this collection
-        var newIndexData = collection.getDB().system.indexes.find({"ns" : collection.getFullName()}).sort({"name":1}).toArray();
+        var newIndexData = collection.getIndexes().sort(function(a,b) {
+            if (a.name > b.name) return 1;
+            else return -1;
+        });
         for (var i = 0; i < newIndexData.length; i++) {
             assert.docEq(indexData[i], newIndexData[i], "indexes not equal");
         }
@@ -164,7 +177,7 @@ function collectionDataValidatorTests() {
     collection = createCollectionWithData(db, "test", myGenerator);
     myValidator = new CollectionDataValidator();
     myValidator.recordCollectionData(collection);
-    db.test.dropIndex(db.system.indexes.findOne({"key.a": { "$exists" : true } }).key);
+    db.test.dropIndex(db.test.getIndexKeys().filter(function(key) { return key.a != null })[0]);
     assert.throws(myValidator.validateCollectionData, [collection], "Validation function should have thrown since we modified the collection");
 
 
@@ -186,7 +199,7 @@ function collectionDataValidatorTests() {
     collection = createCollectionWithData(db, "test", myGenerator);
     myValidator = new CollectionDataValidator();
     myValidator.recordCollectionData(collection);
-    db.test.dropIndex(db.system.indexes.findOne({"key.a": { "$exists" : true } }).key);
+    db.test.dropIndex(db.test.getIndexKeys().filter(function(key) { return key.a != null })[0]);
     assert.throws(myValidator.validateCollectionData, [collection], "Validation function should have thrown since we modified the collection");
 
 

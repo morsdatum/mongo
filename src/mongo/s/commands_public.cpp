@@ -32,6 +32,9 @@
 
 #include "mongo/platform/basic.h"
 
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/base/init.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/parallel.h"
@@ -70,6 +73,10 @@
 
 namespace mongo {
 
+    using boost::intrusive_ptr;
+    using boost::scoped_ptr;
+    using boost::shared_ptr;
+
     namespace dbgrid_pub_cmds {
 
         namespace {
@@ -105,6 +112,38 @@ namespace mongo {
 
                 // Otherwise, shards with errors agree on the error code; return that code.
                 return commonErrCode;
+            }
+
+            /**
+             * Utility function to parse a cursor command response and save the cursor in the
+             * CursorCache "refs" container.  Returns Status::OK() if the cursor was successfully
+             * saved or no cursor was specified in the command response, and returns an error Status
+             * if a parsing error was encountered.
+             */
+            Status storePossibleCursor(const std::string& server, const BSONObj& cmdResult) {
+                if (cmdResult["ok"].trueValue() && cmdResult.hasField("cursor")) {
+                    BSONElement cursorIdElt = cmdResult.getFieldDotted("cursor.id");
+                    if (cursorIdElt.type() != mongo::NumberLong) {
+                        return Status(ErrorCodes::TypeMismatch,
+                                      str::stream() << "expected \"cursor.id\" field from shard "
+                                                    << "response to have NumberLong type, instead "
+                                                    << "got: " << typeName(cursorIdElt.type()));
+                    }
+                    const long long cursorId = cursorIdElt.Long();
+                    if (cursorId != 0) {
+                        BSONElement cursorNsElt = cmdResult.getFieldDotted("cursor.ns");
+                        if (cursorNsElt.type() != mongo::String) {
+                            return Status(ErrorCodes::TypeMismatch,
+                                          str::stream() << "expected \"cursor.ns\" field from "
+                                                        << "shard response to have String type, "
+                                                        << "instead got: "
+                                                        << typeName(cursorNsElt.type()));
+                        }
+                        const std::string cursorNs = cursorNsElt.String();
+                        cursorCache.storeRef(server, cursorId, cursorNs);
+                    }
+                }
+                return Status::OK();
             }
 
         } // namespace
@@ -2294,7 +2333,6 @@ namespace mongo {
                 const vector<Strategy::CommandResult>& shardResults,
                 const string& fullns);
 
-            void storePossibleCursor(const string& server, BSONObj cmdResult) const;
             void killAllCursors(const vector<Strategy::CommandResult>& shardResults);
             bool doAnyShardsNotSupportCursors(const vector<Strategy::CommandResult>& shardResults);
             bool wasMergeCursorsSupported(BSONObj cmdResult);
@@ -2648,7 +2686,7 @@ namespace mongo {
                     cursor && cursor->more());
 
             BSONObj result = cursor->nextSafe().getOwned();
-            storePossibleCursor(cursor->originalHost(), result);
+            uassertStatusOK(storePossibleCursor(cursor->originalHost(), result));
             return result;
         }
 
@@ -2668,16 +2706,6 @@ namespace mongo {
             }
             out.appendElements(result);
             return ok;
-        }
-
-        void PipelineCommand::storePossibleCursor(const string& server, BSONObj cmdResult) const {
-            if (cmdResult["ok"].trueValue() && cmdResult.hasField("cursor")) {
-                long long cursorId = cmdResult["cursor"]["id"].Long();
-                if (cursorId) {
-                    const string cursorNs = cmdResult["cursor"]["ns"].String();
-                    cursorCache.storeRef(server, cursorId, cursorNs);
-                }
-            }
         }
 
         class CmdListCollections : public PublicGridCommand {
@@ -2705,16 +2733,10 @@ namespace mongo {
 
                 bool retval = passthrough( conf, cmdObj, result );
 
-                BSONObj peekResultObj = result.asTempObj();
-
-                if (peekResultObj["ok"].trueValue() && peekResultObj.hasField("cursor")) {
-                    long long cursorId = peekResultObj["cursor"]["id"].Long();
-                    if (cursorId) {
-                        const string cursorNs = peekResultObj["cursor"]["ns"].String();
-                        cursorCache.storeRef(conf->getPrimary().getConnString(),
-                                             cursorId,
-                                             cursorNs);
-                    }
+                Status storeCursorStatus = storePossibleCursor(conf->getPrimary().getConnString(),
+                                                               result.asTempObj());
+                if (!storeCursorStatus.isOK()) {
+                    return appendCommandStatus(result, storeCursorStatus);
                 }
 
                 return retval;
@@ -2747,16 +2769,10 @@ namespace mongo {
 
                 bool retval = passthrough( conf, cmdObj, result );
 
-                BSONObj peekResultObj = result.asTempObj();
-
-                if (peekResultObj["ok"].trueValue() && peekResultObj.hasField("cursor")) {
-                    long long cursorId = peekResultObj["cursor"]["id"].Long();
-                    if (cursorId) {
-                        const string cursorNs = peekResultObj["cursor"]["ns"].String();
-                        cursorCache.storeRef(conf->getPrimary().getConnString(),
-                                             cursorId,
-                                             cursorNs);
-                    }
+                Status storeCursorStatus = storePossibleCursor(conf->getPrimary().getConnString(),
+                                                               result.asTempObj());
+                if (!storeCursorStatus.isOK()) {
+                    return appendCommandStatus(result, storeCursorStatus);
                 }
 
                 return retval;

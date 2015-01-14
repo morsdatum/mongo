@@ -37,7 +37,9 @@
 #include <boost/filesystem/operations.hpp>
 
 #include "mongo/db/operation_context.h"
+#include "mongo/db/storage/mmap_v1/catalog/hashtab.h"
 #include "mongo/db/storage/mmap_v1/catalog/namespace_details.h"
+#include "mongo/db/storage/mmap_v1/dur.h"
 #include "mongo/db/storage/mmap_v1/mmap_v1_options.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/file.h"
@@ -45,14 +47,23 @@
 
 namespace mongo {
 
-    NamespaceDetails* NamespaceIndex::details(const StringData& ns) {
-        Namespace n(ns);
+    NamespaceIndex::NamespaceIndex(const std::string& dir, const std::string& database)
+        : _dir(dir),
+          _database(database),
+          _ht(NULL) {
+
+    }
+
+    NamespaceIndex::~NamespaceIndex() {
+
+    }
+
+    NamespaceDetails* NamespaceIndex::details(const StringData& ns) const {
+        const Namespace n(ns);
         return details(n);
     }
 
-    NamespaceDetails* NamespaceIndex::details(const Namespace& ns) {
-        if ( !_ht.get() )
-            return 0;
+    NamespaceDetails* NamespaceIndex::details(const Namespace& ns) const {
         return _ht->get(ns);
     }
 
@@ -77,17 +88,12 @@ namespace mongo {
 
         massert(17315, "no . in ns", nsIsFull(nss.toString()));
 
-        init( txn );
-        uassert( 10081, "too many namespaces/collections", _ht->put(txn, ns, *details));
+        uassert(10081, "too many namespaces/collections", _ht->put(txn, ns, *details));
     }
 
     void NamespaceIndex::kill_ns( OperationContext* txn, const StringData& ns) {
         const NamespaceString nss(ns.toString());
         invariant(txn->lockState()->isDbLockedForMode(nss.db(), MODE_X));
-
-        if (!_ht.get()) {
-            return;
-        }
 
         const Namespace n(ns);
         _ht->kill(txn, n);
@@ -129,9 +135,10 @@ namespace mongo {
     }
 
     void NamespaceIndex::getCollectionNamespaces( list<string>* tofill ) const {
-        if ( _ht.get() )
-            _ht->iterAll( stdx::bind( namespaceGetNamespacesCallback,
-                                      stdx::placeholders::_1, stdx::placeholders::_2, tofill) );
+        _ht->iterAll(stdx::bind(namespaceGetNamespacesCallback,
+                                stdx::placeholders::_1,
+                                stdx::placeholders::_2,
+                                tofill));
     }
 
     void NamespaceIndex::maybeMkdir() const {
@@ -143,28 +150,40 @@ namespace mongo {
             MONGO_ASSERT_ON_EXCEPTION_WITH_MSG( boost::filesystem::create_directory( dir ), "create dir for db " );
     }
 
-    NOINLINE_DECL void NamespaceIndex::_init( OperationContext* txn ) {
+    void NamespaceIndex::init(OperationContext* txn) {
         invariant(!_ht.get());
 
         unsigned long long len = 0;
-        boost::filesystem::path nsPath = path();
-        string pathString = nsPath.string();
-        void *p = 0;
-        if ( boost::filesystem::exists(nsPath) ) {
-            if( _f.open(pathString, true) ) {
+
+        const boost::filesystem::path nsPath = path();
+        const std::string pathString = nsPath.string();
+
+        void* p = 0;
+
+        if (boost::filesystem::exists(nsPath)) {
+            if (_f.open(pathString, true)) {
                 len = _f.length();
-                if ( len % (1024*1024) != 0 ) {
-                    log() << "bad .ns file: " << pathString << endl;
-                    uassert( 10079 ,  "bad .ns file length, cannot open database", len % (1024*1024) == 0 );
+
+                if (len % (1024 * 1024) != 0) {
+                    StringBuilder sb;
+                    sb << "Invalid length: " << len
+                       << " for .ns file: " << pathString << ". Cannot open database";
+
+                    log() << sb.str();
+                    uassert(10079, sb.str(), len % (1024 * 1024) == 0);
                 }
+
                 p = _f.getView();
             }
         }
         else {
             // use mmapv1GlobalOptions.lenForNewNsFiles, we are making a new database
-            massert(10343, "bad mmapv1GlobalOptions.lenForNewNsFiles",
+            massert(10343,
+                    "bad mmapv1GlobalOptions.lenForNewNsFiles",
                     mmapv1GlobalOptions.lenForNewNsFiles >= 1024*1024);
+
             maybeMkdir();
+
             unsigned long long l = mmapv1GlobalOptions.lenForNewNsFiles;
             log() << "allocating new ns file " << pathString << ", filling with zeroes..." << endl;
 
@@ -176,10 +195,15 @@ namespace mongo {
 
                 File file;
                 file.open(pathString.c_str());
-                massert(18825, str::stream() << "couldn't create file " << pathString, file.is_open());
-                for (fileofs ofs = 0; ofs < l && !file.bad(); ofs += kBlockSize ) {
+
+                massert(18825,
+                        str::stream() << "couldn't create file " << pathString,
+                        file.is_open());
+
+                for (fileofs ofs = 0; ofs < l && !file.bad(); ofs += kBlockSize) {
                     file.write(ofs, &zeros[0], kBlockSize);
                 }
+
                 if (file.bad()) {
                     try {
                         boost::filesystem::remove(pathString);
@@ -192,40 +216,38 @@ namespace mongo {
                 else {
                     file.fsync();
                 }
-                massert(18826, str::stream() << "failure writing file " << pathString, !file.bad() );
+
+                massert(18826,
+                        str::stream() << "failure writing file " << pathString,
+                        !file.bad());
             }
 
-            if ( _f.create(pathString, l, true) ) {
-                // The writes done in this function must not be rolled back. If the containing
-                // UnitOfWork rolls back it should roll back to the state *after* these writes. This
-                // will leave the file empty, but available for future use. That is why we go
-                // directly to the global dur dirty list rather than going through the
-                // OperationContext.
-                getDur().createdFile(pathString, l); // always a new file
+            if (_f.create(pathString, l, true)) {
+                // The writes done in this function must not be rolled back. This will leave the
+                // file empty, but available for future use. That is why we go directly to the
+                // global dur dirty list rather than going through the OperationContext.
+                getDur().createdFile(pathString, l);
+
+                // Commit the journal and all changes to disk so that even if exceptions occur
+                // during subsequent initialization, we won't have uncommited changes during file
+                // close.
+                getDur().commitNow(txn);
+
                 len = l;
-                verify(len == mmapv1GlobalOptions.lenForNewNsFiles);
-                p = _f.getView();
+                invariant(len == mmapv1GlobalOptions.lenForNewNsFiles);
 
-                if ( p ) {
-                    // we do this so the durability system isn't mad at us for
-                    // only initiating file and not doing a write
-                    // grep for 17388
-                    getDur().writingPtr( p, 5 ); // throw away
-                }
+                p = _f.getView();
             }
         }
 
-        if ( p == 0 ) {
-            /** TODO: this shouldn't terminate? */
-            log() << "error couldn't open file " << pathString << " terminating" << endl;
-            dbexit( EXIT_FS );
+        if (p == 0) {
+            severe() << "error couldn't open file " << pathString << " terminating" << endl;
+            invariant(false);
         }
 
-
-        verify( len <= 0x7fffffff );
+        invariant(len <= 0x7fffffff);
         _ht.reset(new NamespaceHashTable(p, (int) len, "namespace index"));
     }
-
 
 }
 

@@ -34,6 +34,9 @@
 
 #include "mongo/db/catalog/index_create.h"
 
+#include <boost/make_shared.hpp>
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/base/error_codes.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/audit.h"
@@ -43,13 +46,15 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/util/log.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/progress_meter.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     /**
      * On rollback sets MultiIndexBlock::_needToCleanup to true.

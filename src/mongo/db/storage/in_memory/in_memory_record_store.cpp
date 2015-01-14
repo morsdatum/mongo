@@ -33,6 +33,8 @@
 
 #include "mongo/db/storage/in_memory/in_memory_record_store.h"
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/oplog_hack.h"
@@ -42,6 +44,9 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using boost::shared_ptr;
+
     class InMemoryRecordStore::InsertChange : public RecoveryUnit::Change {
     public:
         InsertChange(Data* data, RecordId loc) :_data(data), _loc(loc) {}
@@ -312,6 +317,10 @@ namespace mongo {
         return StatusWith<RecordId>(loc);
     }
 
+    bool InMemoryRecordStore::updateWithDamagesSupported() const {
+        return true;
+    }
+
     Status InMemoryRecordStore::updateWithDamages( OperationContext* txn,
                                                    const RecordId& loc,
                                                    const RecordData& oldRec,
@@ -403,7 +412,7 @@ namespace mongo {
                                          bool scanData,
                                          ValidateAdaptor* adaptor,
                                          ValidateResults* results,
-                                         BSONObjBuilder* output) const {
+                                         BSONObjBuilder* output) {
         results->valid = true;
         if (scanData && full) {
             for (Records::const_iterator it = _data->records.begin();

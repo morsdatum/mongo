@@ -27,7 +27,10 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kAccessControl
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/auth/user_cache_invalidator_job.h"
 
@@ -42,6 +45,7 @@
 #include "mongo/db/server_parameters.h"
 #include "mongo/s/config.h"
 #include "mongo/util/background.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/time_support.h"
 

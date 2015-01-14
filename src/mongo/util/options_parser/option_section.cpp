@@ -28,6 +28,8 @@
 #include "mongo/util/options_parser/option_section.h"
 
 #include <algorithm>
+#include <boost/shared_ptr.hpp>
+#include <iostream>
 #include <sstream>
 
 #include "mongo/bson/util/builder.h"
@@ -36,6 +38,8 @@
 
 namespace mongo {
 namespace optionenvironment {
+
+    using boost::shared_ptr;
 
     // Registration interface
 

@@ -30,7 +30,7 @@
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/repl/bgsync.h"
 #include "mongo/db/repl/master_slave.h"  // replSettings
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/operation_context.h"
 
 namespace mongo {
@@ -72,7 +72,7 @@ namespace repl {
 
             ReplicationCoordinator* replCoord = getGlobalReplicationCoordinator();
             if (getGlobalReplicationCoordinator()->getSettings().usingReplSets()) {
-                const MemberState memberState = replCoord->getCurrentMemberState();
+                const MemberState memberState = replCoord->getMemberState();
                 if (memberState.startup()) {
                     return appendCommandStatus(result, Status(ErrorCodes::NotYetInitialized,
                                                               "no replication yet active"));

@@ -31,17 +31,26 @@
 
 #include "mongo/platform/basic.h"
 
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
+#include <iostream>
+
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/util/base64.h"
 #include "mongo/util/compress.h"
 #include "mongo/util/paths.h"
+#include "mongo/util/ptr.h"
 #include "mongo/util/queue.h"
 #include "mongo/util/stringutils.h"
 #include "mongo/util/text.h"
+#include "mongo/util/thread_safe_string.h"
 #include "mongo/util/time_support.h"
 
 namespace BasicTests {
+
+    using boost::scoped_ptr;
+    using boost::shared_ptr;
 
     class Rarely {
     public:
@@ -348,23 +357,6 @@ namespace BasicTests {
         }
     };
 
-
-    class DatabaseOwnsNS {
-    public:
-        void run() {
-            OperationContextImpl txn;
-            ScopedTransaction transaction(&txn, MODE_X);
-            Lock::GlobalWrite lk(txn.lockState());
-
-            Database db("dbtests_basictests_ownsns", NULL );
-
-            ASSERT( db.ownsNS( "dbtests_basictests_ownsns.x" ) );
-            ASSERT( db.ownsNS( "dbtests_basictests_ownsns.x.y" ) );
-            ASSERT( !db.ownsNS( "dbtests_basictests_ownsn.x.y" ) );
-            ASSERT( !db.ownsNS( "dbtests_basictests_ownsnsa.x.y" ) );
-        }
-    };
-
     class PtrTests {
     public:
         void run() {
@@ -552,8 +544,6 @@ namespace BasicTests {
             add< sleeptest >();
             add< SleepBackoffTest >();
             add< AssertTests >();
-
-            add< DatabaseOwnsNS >();
 
             add< PtrTests >();
 

@@ -107,12 +107,16 @@ namespace mongo {
             return StatusWith<RecordId>( oldLocation );
         }
 
+        virtual bool updateWithDamagesSupported() const {
+            return false;
+        }
+
         virtual Status updateWithDamages( OperationContext* txn,
                                           const RecordId& loc,
                                           const RecordData& oldRec,
                                           const char* damageSource,
                                           const mutablebson::DamageVector& damages ) {
-            return Status::OK();
+            invariant(false);
         }
 
         virtual RecordIterator* getIterator( OperationContext* txn,
@@ -146,7 +150,7 @@ namespace mongo {
         virtual Status validate( OperationContext* txn,
                                  bool full, bool scanData,
                                  ValidateAdaptor* adaptor,
-                                 ValidateResults* results, BSONObjBuilder* output ) const {
+                                 ValidateResults* results, BSONObjBuilder* output ) {
             return Status::OK();
         }
 

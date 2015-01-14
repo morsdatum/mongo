@@ -1,4 +1,5 @@
 /*-
+ * Copyright (c) 2014-2015 MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
  *	All rights reserved.
  *
@@ -477,7 +478,6 @@ __wt_curds_open(
 	cursor = &data_source->iface;
 	*cursor = iface;
 	cursor->session = &session->iface;
-	F_SET(cursor, WT_CURSTD_DATA_SOURCE);
 
 	/*
 	 * XXX

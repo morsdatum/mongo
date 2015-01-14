@@ -26,7 +26,10 @@
 *    it in the license file.
 */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include <cctype>
 
@@ -38,6 +41,8 @@
 #include "mongo/util/stringutils.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     const char DocumentSourceMatch::matchName[] = "$match";
 

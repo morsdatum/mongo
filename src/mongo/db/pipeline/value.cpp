@@ -26,11 +26,15 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/value.h"
 
 #include <boost/functional/hash.hpp>
+#include <boost/scoped_array.hpp>
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/document.h"
@@ -39,6 +43,7 @@
 
 namespace mongo {
     using namespace mongoutils;
+    using boost::intrusive_ptr;
 
     void ValueStorage::verifyRefCountingIfShould() const {
         switch (type) {

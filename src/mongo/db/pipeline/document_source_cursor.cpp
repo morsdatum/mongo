@@ -30,6 +30,8 @@
 
 #include "mongo/db/pipeline/document_source.h"
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/instance.h"
@@ -41,6 +43,9 @@
 
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
+    using boost::shared_ptr;
 
     DocumentSourceCursor::~DocumentSourceCursor() {
         dispose();

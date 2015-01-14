@@ -32,13 +32,13 @@
 
 #include "mongo/db/commands/write_commands/batch_executor.h"
 
+#include <boost/scoped_ptr.hpp>
 #include <memory>
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/introspect.h"
 #include "mongo/db/lasterror.h"
@@ -57,8 +57,8 @@
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/query_knobs.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
 #include "mongo/db/repl/repl_settings.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/operation_context_impl.h"
@@ -73,6 +73,8 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     namespace {
 
@@ -630,7 +632,8 @@ namespace mongo {
                    << ", continuing " << causedBy( opError->getErrMessage() ) << endl;
         }
 
-        bool logAll = logger::globalLogDomain()->shouldLog( logger::LogSeverity::Debug( 1 ) );
+        bool logAll = logger::globalLogDomain()->shouldLog(logger::LogComponent::kWrite,
+                                                           logger::LogSeverity::Debug(1));
         bool logSlow = executionTime
                        > ( serverGlobalParams.slowMS + currentOp->getExpectedLatencyMs() );
 
@@ -855,15 +858,16 @@ namespace mongo {
              ++state.currIndex) {
 
             if (elapsedTracker.intervalHasElapsed()) {
-                // Consider yielding between inserts. We never yield for storage engines that
-                // support document-level locking. TODO: as an optimization, this should only
-                // yield if another thread is waiting for our lock.
-                if (!supportsDocLocking() && state.hasLock()) {
+                // Yield between inserts.
+                if (state.hasLock()) {
                     // Release our locks. They get reacquired when insertOne() calls
                     // ExecInsertsState::lockAndCheck(). Since the lock manager guarantees FIFO
                     // queues waiting on locks, there is no need to explicitly sleep or give up
                     // control of the processor here.
                     state.unlock();
+
+                    // This releases any storage engine held locks/snapshots.
+                    _txn->recoveryUnit()->commitAndRestart();
                 }
 
                 _txn->checkForInterrupt();
@@ -995,7 +999,7 @@ namespace mongo {
 
         Database* database = _context->db();
         dassert(database);
-        _collection = database->getCollection(txn, request->getTargetingNS());
+        _collection = database->getCollection(request->getTargetingNS());
         if (!_collection) {
             if (intentLock) {
                 // try again with full X lock.
@@ -1208,7 +1212,7 @@ namespace mongo {
                 Lock::DBLock lk(txn->lockState(), nsString.db(), MODE_X);
                 Client::Context ctx(txn, nsString.ns(), false /* don't check version */);
                 Database* db = ctx.db();
-                if ( db->getCollection( txn, nsString.ns() ) ) {
+                if ( db->getCollection( nsString.ns() ) ) {
                     // someone else beat us to it
                 }
                 else {
@@ -1256,7 +1260,7 @@ namespace mongo {
             }
 
             Client::Context ctx(txn, nsString.ns(), false /* don't check version */);
-            Collection* collection = db->getCollection(txn, nsString.ns());
+            Collection* collection = db->getCollection(nsString.ns());
 
             if ( collection == NULL ) {
                 if ( createCollection ) {
@@ -1279,8 +1283,9 @@ namespace mongo {
                 continue;
             }
 
+            OpDebug* debug = &txn->getCurOp()->debug();
+
             try {
-                OpDebug* debug = &txn->getCurOp()->debug();
                 invariant(collection);
                 PlanExecutor* rawExec;
                 uassertStatusOK(getExecutorUpdate(txn, collection, &parsedUpdate, debug, &rawExec));
@@ -1301,6 +1306,7 @@ namespace mongo {
                 result->getStats().upsertedID = resUpsertedID;
             }
             catch ( const WriteConflictException& dle ) {
+                debug->writeConflicts++;
                 if ( isMulti ) {
                     log() << "Had WriteConflict during multi update, aborting";
                     throw;
@@ -1375,7 +1381,7 @@ namespace mongo {
 
                 PlanExecutor* rawExec;
                 uassertStatusOK(getExecutorDelete(txn,
-                                                  ctx.db()->getCollection(txn, nss),
+                                                  ctx.db()->getCollection(nss),
                                                   &parsedDelete,
                                                   &rawExec));
                 boost::scoped_ptr<PlanExecutor> exec(rawExec);
@@ -1387,6 +1393,7 @@ namespace mongo {
                 break;
             }
             catch ( const WriteConflictException& dle ) {
+                txn->getCurOp()->debug().writeConflicts++;
                 WriteConflictException::logAndBackoff( attempt++, "delete", nss.ns() );
             }
             catch ( const DBException& ex ) {

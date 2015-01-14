@@ -32,16 +32,88 @@
 
 #include "mongo/db/concurrency/lock_state.h"
 
-#include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/namespace_string.h"
+#include "mongo/platform/compiler.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
-#include "mongo/util/stacktrace.h"
-#include "mongo/util/timer.h"
 
 namespace mongo {
 namespace {
+
+    /**
+     * Partitioned global lock statistics, so we don't hit the same bucket.
+     */
+    class PartitionedInstanceWideLockStats {
+        MONGO_DISALLOW_COPYING(PartitionedInstanceWideLockStats);
+    public:
+
+        PartitionedInstanceWideLockStats() { }
+
+        void recordAcquisition(LockerId id, ResourceId resId, LockMode mode) {
+            LockStats& stats = _get(id);
+            stats.recordAcquisition(resId, mode);
+        }
+
+        void recordWait(LockerId id, ResourceId resId, LockMode mode) {
+            LockStats& stats = _get(id);
+            stats.recordWait(resId, mode);
+        }
+
+        void recordWaitTime(LockerId id, ResourceId resId, LockMode mode, uint64_t waitMicros) {
+            LockStats& stats = _get(id);
+            stats.recordWaitTime(resId, mode, waitMicros);
+        }
+
+        void recordDeadlock(ResourceId resId, LockMode mode) {
+            LockStats& stats = _get(resId);
+            stats.recordDeadlock(resId, mode);
+        }
+
+        void report(LockStats* outStats) const {
+            for (int i = 0; i < NumPartitions; i++) {
+                outStats->append(_partitions[i].stats);
+            }
+        }
+
+        void reset() {
+            for (int i = 0; i < NumPartitions; i++) {
+                _partitions[i].stats.reset();
+            }
+        }
+
+    private:
+
+        // This alignment is a best effort approach to ensure that each partition falls on a
+        // separate page/cache line in order to avoid false sharing. The 4096-byte alignment is
+        // in an effort to play nicely with NUMA.
+        struct MONGO_COMPILER_ALIGN_TYPE(4096) AlignedLockStats {
+            LockStats stats;
+        };
+
+        enum { NumPartitions = 8 };
+
+
+        LockStats& _get(LockerId id) {
+            return _partitions[id % NumPartitions].stats;
+        }
+
+
+        AlignedLockStats _partitions[NumPartitions];
+    };
+
+
+    /**
+     * Used to sort locks by granularity when snapshotting lock state. We must report and reacquire
+     * locks in the same granularity in which they are acquired (i.e. global, flush, database,
+     * collection, etc).
+     */
+    struct SortByGranularity {
+        inline bool operator()(const Locker::OneLock& lhs, const Locker::OneLock& rhs) const {
+            return lhs.resourceId.getType() < rhs.resourceId.getType();
+        }
+    };
+
 
     // Global lock manager instance.
     LockManager globalLockManager;
@@ -61,16 +133,9 @@ namespace {
     // Dispenses unique LockerId identifiers
     AtomicUInt64 idCounter(0);
 
-    /**
-     * Used to sort locks by granularity when snapshotting lock state. We must report and reacquire
-     * locks in the same granularity in which they are acquired (i.e. global, flush, database,
-     * collection, etc).
-     */
-    struct SortByGranularity {
-        inline bool operator()(const Locker::OneLock& lhs, const Locker::OneLock& rhs) const {
-            return lhs.resourceId.getType() < rhs.resourceId.getType();
-        }
-    };
+    // Partitioned global lock statistics, so we don't hit the same bucket
+    PartitionedInstanceWideLockStats globalStats;
+
 
     /**
      * Returns whether the passed in mode is S or IS. Used for validation checks.
@@ -211,6 +276,7 @@ namespace {
     template<bool IsForMMAPV1>
     LockerImpl<IsForMMAPV1>::LockerImpl()
         : _id(idCounter.addAndFetch(1)),
+          _requestStartTime(0),
           _wuowNestingLevel(0),
           _batchWriter(false),
           _lockPendingParallelWriter(false) {
@@ -253,7 +319,7 @@ namespace {
 
     template<bool IsForMMAPV1>
     LockResult LockerImpl<IsForMMAPV1>::lockGlobalComplete(unsigned timeoutMs) {
-        return lockComplete(resourceIdGlobal, timeoutMs, false);
+        return lockComplete(resourceIdGlobal, getLockMode(resourceIdGlobal), timeoutMs, false);
     }
 
     template<bool IsForMMAPV1>
@@ -349,7 +415,7 @@ namespace {
         // unsuccessful result that the lock manager would return is LOCK_WAITING.
         invariant(result == LOCK_WAITING);
 
-        return lockComplete(resId, timeoutMs, checkDeadlock);
+        return lockComplete(resId, mode, timeoutMs, checkDeadlock);
     }
 
     template<bool IsForMMAPV1>
@@ -446,6 +512,7 @@ namespace {
         // Zero-out the contents
         lockerInfo->locks.clear();
         lockerInfo->waitingResource = ResourceId();
+        lockerInfo->stats.reset();
 
         if (!isLocked()) return;
 
@@ -464,6 +531,7 @@ namespace {
         std::sort(lockerInfo->locks.begin(), lockerInfo->locks.end(), SortByGranularity());
 
         lockerInfo->waitingResource = getWaitingResource();
+        lockerInfo->stats.append(_stats);
     }
 
     template<bool IsForMMAPV1>
@@ -560,6 +628,10 @@ namespace {
             isNew = false;
         }
 
+        // Making this call here will record lock re-acquisitions and conversions as well.
+        globalStats.recordAcquisition(_id, resId, mode);
+        _stats.recordAcquisition(resId, mode);
+
         // Give priority to the full modes for global and flush lock so we don't stall global
         // operations such as shutdown or flush.
         if (resId == resourceIdGlobal || (IsForMMAPV1 && resId == resourceIdMMAPV1Flush)) {
@@ -573,19 +645,28 @@ namespace {
             invariant(getLockMode(resourceIdGlobal) != MODE_NONE);
         }
 
+        // The notification object must be cleared before we invoke the lock manager, because
+        // otherwise we might reset state if the lock becomes granted very fast.
         _notify.clear();
 
-        return isNew ? globalLockManager.lock(resId, request, mode) :
-                       globalLockManager.convert(resId, request, mode);
+        LockResult result = isNew ? globalLockManager.lock(resId, request, mode) :
+                                    globalLockManager.convert(resId, request, mode);
+
+        if (result == LOCK_WAITING) {
+            // Start counting the wait time so that lockComplete can update that metric
+            _requestStartTime = curTimeMicros64();
+            globalStats.recordWait(_id, resId, mode);
+            _stats.recordWait(resId, mode);
+        }
+
+        return result;
     }
 
     template<bool IsForMMAPV1>
     LockResult LockerImpl<IsForMMAPV1>::lockComplete(ResourceId resId,
+                                                     LockMode mode,
                                                      unsigned timeoutMs,
                                                      bool checkDeadlock) {
-
-        // Tracks the lock acquisition time if we don't obtain the lock immediately
-        Timer timer;
 
         // Under MMAP V1 engine a deadlock can occur if a thread goes to sleep waiting on
         // DB lock, while holding the flush lock, so it has to be released. This is only
@@ -606,6 +687,11 @@ namespace {
         while (true) {
             result = _notify.wait(waitTimeMs);
 
+            // Account for the time spent waiting on the notification object
+            const uint64_t elapsedTimeMicros = curTimeMicros64() - _requestStartTime;
+            globalStats.recordWaitTime(_id, resId, mode, elapsedTimeMicros);
+            _stats.recordWaitTime(resId, mode, elapsedTimeMicros);
+
             if (result == LOCK_OK) break;
 
             if (checkDeadlock) {
@@ -613,12 +699,15 @@ namespace {
                 if (wfg.check().hasCycle()) {
                     warning() << "Deadlock found: " << wfg.toString();
 
+                    globalStats.recordDeadlock(resId, mode);
+                    _stats.recordDeadlock(resId, mode);
+
                     result = LOCK_DEADLOCK;
                     break;
                 }
             }
 
-            const unsigned elapsedTimeMs = timer.millis();
+            const unsigned elapsedTimeMs = elapsedTimeMicros / 1000;
             waitTimeMs = (elapsedTimeMs < timeoutMs) ?
                 std::min(timeoutMs - elapsedTimeMs, DeadlockTimeoutMs) : 0;
 
@@ -706,7 +795,8 @@ namespace {
 
 
     AutoAcquireFlushLockForMMAPV1Commit::AutoAcquireFlushLockForMMAPV1Commit(Locker* locker)
-        : _locker(static_cast<MMAPV1LockerImpl*>(locker)) {
+        : _locker(locker),
+          _released(false) {
 
         invariant(LOCK_OK == _locker->lock(resourceIdMMAPV1Flush, MODE_S));
     }
@@ -720,11 +810,14 @@ namespace {
     }
 
     void AutoAcquireFlushLockForMMAPV1Commit::release() {
-        invariant(_locker->unlock(resourceIdMMAPV1Flush));
+        if (!_released) {
+            invariant(_locker->unlock(resourceIdMMAPV1Flush));
+            _released = true;
+        }
     }
 
     AutoAcquireFlushLockForMMAPV1Commit::~AutoAcquireFlushLockForMMAPV1Commit() {
-        invariant(_locker->unlock(resourceIdMMAPV1Flush));
+        release();
     }
 
 
@@ -736,10 +829,23 @@ namespace {
         return &globalLockManager;
     }
 
+    void reportGlobalLockingStats(LockStats* outStats) {
+        globalStats.report(outStats);
+    }
+
+    void resetGlobalLockStats() {
+        globalStats.reset();
+    }
+
     
     // Ensures that there are two instances compiled for LockerImpl for the two values of the
     // template argument.
     template class LockerImpl<true>;
     template class LockerImpl<false>;
+
+    // Definition for the hardcoded localdb and oplog collection info
+    const ResourceId resourceIdLocalDB = ResourceId(RESOURCE_DATABASE, StringData("local"));
+    const ResourceId resourceIdOplog =
+        ResourceId(RESOURCE_COLLECTION, StringData("local.oplog.rs"));
 
 } // namespace mongo

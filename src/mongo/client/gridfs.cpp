@@ -27,14 +27,17 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/client/gridfs.h"
 
 #include <boost/filesystem/operations.hpp>
-#include <boost/smart_ptr.hpp>
 #include <fcntl.h>
 #include <fstream>
+#include <iostream>
 #include <utility>
 
 #if defined(_WIN32)

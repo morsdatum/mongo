@@ -32,6 +32,8 @@
 #pragma once
 
 #include <atomic>
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
 #include <string>
 #include <memory>
 #include <vector>
@@ -126,6 +128,8 @@ namespace mongo {
                                                   bool enforceQuota,
                                                   UpdateMoveNotifier* notifier );
 
+        virtual bool updateWithDamagesSupported() const;
+
         virtual Status updateWithDamages( OperationContext* txn,
                                           const RecordId& loc,
                                           const RecordData& oldRec,
@@ -151,7 +155,7 @@ namespace mongo {
         virtual Status validate( OperationContext* txn,
                                  bool full, bool scanData,
                                  ValidateAdaptor* adaptor,
-                                 ValidateResults* results, BSONObjBuilder* output ) const;
+                                 ValidateResults* results, BSONObjBuilder* output );
 
         virtual void appendCustomStats( OperationContext* txn,
                                         BSONObjBuilder* result,

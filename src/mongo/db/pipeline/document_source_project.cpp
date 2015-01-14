@@ -26,7 +26,12 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
+
+#include <boost/smart_ptr.hpp>
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/document.h"
@@ -35,6 +40,8 @@
 #include "mongo/db/pipeline/value.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     const char DocumentSourceProject::projectName[] = "$project";
 
@@ -75,7 +82,7 @@ namespace mongo {
 
     void DocumentSourceProject::optimize() {
         intrusive_ptr<Expression> pE(pEO->optimize());
-        pEO = dynamic_pointer_cast<ExpressionObject>(pE);
+        pEO = boost::dynamic_pointer_cast<ExpressionObject>(pE);
     }
 
     Value DocumentSourceProject::serialize(bool explain) const {

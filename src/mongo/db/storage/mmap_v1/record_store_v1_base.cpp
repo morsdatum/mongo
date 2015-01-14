@@ -32,6 +32,8 @@
 
 #include "mongo/db/storage/mmap_v1/record_store_v1_base.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/mmap_v1/extent.h"
@@ -44,6 +46,8 @@
 #include "mongo/util/touch_pages.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     /* Deleted list buckets are used to quickly locate free space based on size.  Each bucket
        contains records up to that size (meaning a record with a size exactly equal to
@@ -65,6 +69,45 @@ namespace mongo {
     BOOST_STATIC_ASSERT(sizeof(RecordStoreV1Base::bucketSizes)
                         / sizeof(RecordStoreV1Base::bucketSizes[0])
                         == RecordStoreV1Base::Buckets);
+
+    SavedCursorRegistry::~SavedCursorRegistry() {
+        for (SavedCursorSet::iterator it = _cursors.begin(); it != _cursors.end(); it++) {
+            (*it)->_registry = NULL; // prevent SavedCursor destructor from accessing this
+        }
+    }
+
+    void SavedCursorRegistry::registerCursor(SavedCursor* cursor) {
+        invariant(!cursor->_registry);
+        cursor->_registry = this;
+        scoped_spinlock lock(_mutex);
+        _cursors.insert(cursor);
+    }
+
+    bool SavedCursorRegistry::unregisterCursor(SavedCursor* cursor) {
+        if (!cursor->_registry) {
+            return false;
+        }
+        invariant(cursor->_registry == this);
+        cursor->_registry = NULL;
+        scoped_spinlock lock(_mutex);
+        invariant(_cursors.erase(cursor));
+        return true;
+    }
+
+    void SavedCursorRegistry::invalidateCursorsForBucket(DiskLoc bucket) {
+        // While this is not strictly necessary as an exclusive collection lock will be held,
+        // it's cleaner to just make the SavedCursorRegistry thread-safe. Spinlock is OK here.
+        scoped_spinlock lock(mutex);
+        for (SavedCursorSet::iterator it = _cursors.begin(); it != _cursors.end();) {
+            if ((*it)->bucket == bucket) {
+                (*it)->_registry = NULL; // prevent ~SavedCursor from trying to unregister
+                _cursors.erase(it++);
+            }
+            else {
+                it++;
+            }
+        }
+    }
 
     RecordStoreV1Base::RecordStoreV1Base( const StringData& ns,
                                           RecordStoreV1MetaData* details,
@@ -361,6 +404,9 @@ namespace mongo {
         return newLocation;
     }
 
+    bool RecordStoreV1Base::updateWithDamagesSupported() const {
+        return true;
+    }
 
     Status RecordStoreV1Base::updateWithDamages( OperationContext* txn,
                                                  const RecordId& loc,
@@ -512,7 +558,7 @@ namespace mongo {
     Status RecordStoreV1Base::validate( OperationContext* txn,
                                         bool full, bool scanData,
                                         ValidateAdaptor* adaptor,
-                                        ValidateResults* results, BSONObjBuilder* output ) const {
+                                        ValidateResults* results, BSONObjBuilder* output ) {
 
         // 1) basic status that require no iteration
         // 2) extent level info
@@ -806,9 +852,8 @@ namespace mongo {
         result->append( "paddingFactorNote", "paddingFactor is unused and unmaintained in 2.8. It "
                                              "remains hard coded to 1.0 for compatibility only." );
         result->append( "userFlags", _details->userFlags() );
-
+        result->appendBool( "capped", isCapped() );
         if ( isCapped() ) {
-            result->appendBool( "capped", true );
             result->appendNumber( "max", _details->maxCappedDocs() );
             result->appendNumber( "maxSize", static_cast<long long>(storageSize(txn, NULL, 0) /
                                       scale) );

@@ -30,7 +30,12 @@
 
 #pragma once
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
+
+#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 
@@ -52,14 +57,12 @@ namespace mongo {
         Shard(const std::string& name,
               const std::string& addr,
               long long maxSizeMB,
-              bool isDraining,
-              const BSONArray& tags);
+              bool isDraining);
 
         Shard(const std::string& name,
               const ConnectionString& connStr,
               long long maxSizeMB,
-              bool isDraining,
-              const std::set<std::string>& tags);
+              bool isDraining);
 
         Shard( const std::string& ident ) {
             reset( ident );
@@ -70,8 +73,7 @@ namespace mongo {
             _addr(other._addr),
             _cs(other._cs),
             _maxSizeMB(other._maxSizeMB),
-            _isDraining(other._isDraining),
-            _tags(other._tags) {
+            _isDraining(other._isDraining) {
         }
 
         static Shard make( const std::string& ident ) {
@@ -145,16 +147,27 @@ namespace mongo {
         }
         BSONObj runCommand( const std::string& db , const BSONObj& cmd ) const ;
 
+        /**
+         * Returns the version string from the shard based from the serverStatus command result.
+         */
+        static std::string getShardMongoVersion(const std::string& shardHost);
+
+        /**
+         * Returns the total data size in bytes the shard is currently using.
+         */
+        static long long getShardDataSizeBytes(const std::string& shardHost);
+
+        /**
+         * Returns metadata and stats for this shard.
+         */
         ShardStatus getStatus() const ;
-        
+
         /**
          * mostly for replica set
          * retursn true if node is the shard 
          * of if the replica set contains node
          */
         bool containsNode( const std::string& node ) const;
-
-        const std::set<std::string>& tags() const { return _tags; }
 
         static void getAllShards( std::vector<Shard>& all );
         static void printShardInfo( std::ostream& out );
@@ -185,9 +198,8 @@ namespace mongo {
         ConnectionString _cs;
         long long _maxSizeMB;    // in MBytes, 0 is unlimited
         bool      _isDraining; // shard is currently being removed
-        std::set<std::string> _tags;
     };
-    typedef shared_ptr<Shard> ShardPtr;
+    typedef boost::shared_ptr<Shard> ShardPtr;
 
     class ShardStatus {
     public:
@@ -230,7 +242,7 @@ namespace mongo {
     };
 
     class ChunkManager;
-    typedef shared_ptr<const ChunkManager> ChunkManagerPtr;
+    typedef boost::shared_ptr<const ChunkManager> ChunkManagerPtr;
 
     class ShardConnection : public AScopedConnection {
     public:

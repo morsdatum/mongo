@@ -34,6 +34,9 @@
 
 #include "mongo/s/chunk.h"
 
+#include <boost/shared_ptr.hpp>
+#include <iostream>
+
 #include "mongo/base/owned_pointer_map.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclientcursor.h"
@@ -58,6 +61,7 @@
 #include "mongo/s/type_settings.h"
 #include "mongo/util/concurrency/ticketholder.h"
 #include "mongo/util/log.h"
+#include "mongo/util/print.h"
 #include "mongo/util/startup_test.h"
 #include "mongo/util/timer.h"
 #include "mongo/db/query/canonical_query.h"
@@ -67,6 +71,8 @@
 #include "mongo/db/write_concern_options.h"
 
 namespace mongo {
+
+    using boost::shared_ptr;
 
     inline bool allOfType(BSONType type, const BSONObj& o) {
         BSONObjIterator it(o);
@@ -94,21 +100,24 @@ namespace mongo {
      */
     static bool tryMoveToOtherShard(const ChunkManager& manager, const ChunkType& chunk) {
         // reload sharding metadata before starting migration
-        Shard::reloadShardInfo();
         ChunkManagerPtr chunkMgr = manager.reload(false /* just reloaded in mulitsplit */);
 
-        vector<Shard> allShards;
-        Shard::getAllShards(allShards);
-        if (allShards.size() < 2) {
+        ShardInfoMap shardInfo;
+        Status loadStatus = DistributionStatus::populateShardInfoMap(&shardInfo);
+
+        if (!loadStatus.isOK()) {
+            warning() << "failed to load shard metadata while trying to moveChunk after "
+                      << "auto-splitting" << causedBy(loadStatus);
+            return false;
+        }
+
+        if (shardInfo.size() < 2) {
             LOG(0) << "no need to move top chunk since there's only 1 shard" << endl;
             return false;
         }
 
-        ShardInfoMap shardInfo;
-        DistributionStatus::populateShardInfoMap(allShards, &shardInfo);
-
         OwnedPointerMap<string, OwnedPointerVector<ChunkType> > shardToChunkMap;
-        DistributionStatus::populateShardToChunksMap(allShards,
+        DistributionStatus::populateShardToChunksMap(shardInfo,
                                                      *chunkMgr,
                                                      &shardToChunkMap.mutableMap());
 

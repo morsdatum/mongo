@@ -27,7 +27,10 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/util/net/message.h"
 
@@ -35,7 +38,6 @@
 #include <errno.h>
 #include <time.h>
 
-#include "mongo/util/goodies.h"
 #include "mongo/util/net/listen.h"
 #include "mongo/util/net/message_port.h"
 

@@ -34,6 +34,8 @@
 #include "mongo/platform/basic.h"
 
 #include <boost/thread.hpp>
+#include <boost/version.hpp>
+#include <iostream>
 
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_state.h"
@@ -48,8 +50,6 @@
 #include "mongo/util/concurrency/synchronization.h"
 #include "mongo/util/concurrency/ticketholder.h"
 #include "mongo/util/log.h"
-#include "mongo/server.h"
-
 
 namespace ThreadedTests {
 

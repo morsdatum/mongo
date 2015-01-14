@@ -375,6 +375,23 @@ var authCommandsLib = {
             ]
         },
         {
+            testname: "cleanupOrphaned",
+            command: {cleanupOrphaned: firstDbName + ".x"},
+            skipSharded: true,
+            testcases: [
+                {
+                    runOnDb: adminDbName,
+                    roles: roles_clusterManager,
+                    privileges: [
+                        { resource: {cluster: true}, actions: ["cleanupOrphaned"] }
+                    ],
+                    expectFail: true
+                },
+                { runOnDb: firstDbName, roles: {} },
+                { runOnDb: secondDbName, roles: {} }
+            ]
+        },
+        {
             testname: "cloneCollection_1",
             command: {cloneCollection: firstDbName + ".x"},
             skipSharded: true,
@@ -2389,28 +2406,6 @@ var authCommandsLib = {
                 }
             ]
         }, */
-        {
-            testname: "text",
-            command: {text: "x"},
-            testcases: [
-                {
-                    runOnDb: firstDbName,
-                    roles: roles_read,
-                    privileges: [
-                        { resource: {db: firstDbName, collection: "x"}, actions: ["find"] }
-                    ],
-                    expectFail: true
-                },
-                {
-                    runOnDb: secondDbName,
-                    roles: roles_readAny,
-                    privileges: [
-                        { resource: {db: secondDbName, collection: "x"}, actions: ["find"] }
-                    ],
-                    expectFail: true
-                }
-            ]
-        },
         {
             testname: "top",
             command: {top: 1},

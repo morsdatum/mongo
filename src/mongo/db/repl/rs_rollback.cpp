@@ -33,6 +33,8 @@
 
 #include "mongo/db/repl/rs_rollback.h"
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/authorization_manager_global.h"
 #include "mongo/db/client.h"
@@ -49,8 +51,8 @@
 #include "mongo/db/repl/minvalid.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/oplogreader.h"
-#include "mongo/db/repl/repl_coordinator.h"
-#include "mongo/db/repl/repl_coordinator_impl.h"
+#include "mongo/db/repl/replication_coordinator.h"
+#include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/rslog.h"
 #include "mongo/util/log.h"
 
@@ -93,6 +95,9 @@
  */
 
 namespace mongo {
+
+    using boost::shared_ptr;
+
 namespace repl {
 namespace {
 
@@ -252,7 +257,7 @@ namespace {
         boost::scoped_ptr<PlanExecutor> exec(
                 InternalPlanner::collectionScan(txn,
                                                 rsoplog,
-                                                ctx.db()->getCollection(txn, rsoplog),
+                                                ctx.db()->getCollection(rsoplog),
                                                 InternalPlanner::BACKWARD));
 
         BSONObj ourObj;
@@ -528,7 +533,7 @@ namespace {
 
         log() << "rollback 4.7";
         Client::Context ctx(txn, rsoplog);
-        Collection* oplogCollection = ctx.db()->getCollection(txn, rsoplog);
+        Collection* oplogCollection = ctx.db()->getCollection(rsoplog);
         uassert(13423,
                 str::stream() << "replSet error in rollback can't find " << rsoplog,
                 oplogCollection);
@@ -567,7 +572,7 @@ namespace {
 
                 // Add the doc to our rollback file
                 BSONObj obj;
-                bool found = Helpers::findOne(txn, ctx.db()->getCollection(txn, doc.ns), pattern, obj, false);
+                bool found = Helpers::findOne(txn, ctx.db()->getCollection(doc.ns), pattern, obj, false);
                 if (found) {
                     removeSaver->goingToDelete(obj);
                 }
@@ -580,7 +585,7 @@ namespace {
                     // TODO 1.6 : can't delete from a capped collection.  need to handle that here.
                     deletes++;
 
-                    Collection* collection = ctx.db()->getCollection(txn, doc.ns);
+                    Collection* collection = ctx.db()->getCollection(doc.ns);
                     if (collection) {
                         if (collection->isCapped()) {
                             // can't delete from a capped collection - so we truncate instead. if
@@ -723,7 +728,7 @@ namespace {
          *  also, this is better for status reporting - we know what is happening.
          */
         if (!replCoord->setFollowerMode(MemberState::RS_ROLLBACK)) {
-            warning() << "Cannot transition from " << replCoord->getCurrentMemberState() <<
+            warning() << "Cannot transition from " << replCoord->getMemberState() <<
                 " to " << MemberState(MemberState::RS_ROLLBACK);
             return 0;
         }
@@ -777,7 +782,7 @@ namespace {
         if (!replCoord->setFollowerMode(MemberState::RS_RECOVERING)) {
             warning() << "Failed to transition into " << MemberState(MemberState::RS_RECOVERING) <<
                 "; expected to be in state " << MemberState(MemberState::RS_ROLLBACK) <<
-                "but found self in " << replCoord->getCurrentMemberState();
+                "but found self in " << replCoord->getMemberState();
         }
 
         return 0;

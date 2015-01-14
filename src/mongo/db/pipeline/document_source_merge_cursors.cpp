@@ -26,12 +26,18 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document_source.h"
 
+#include <boost/make_shared.hpp>
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
 
     const char DocumentSourceMergeCursors::name[] = "$mergeCursors";
 

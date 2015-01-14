@@ -81,6 +81,10 @@ namespace mongo {
             invariant(false);
         }
 
+        virtual bool updateWithDamagesSupported() const {
+            return true;
+        }
+
         virtual Status updateWithDamages(OperationContext* txn,
                                          const RecordId& loc,
                                          const RecordData& oldRec,
@@ -124,7 +128,7 @@ namespace mongo {
                                 bool full,
                                 bool scanData,
                                 ValidateAdaptor* adaptor,
-                                ValidateResults* results, BSONObjBuilder* output) const {
+                                ValidateResults* results, BSONObjBuilder* output) {
             invariant(false);
         }
 

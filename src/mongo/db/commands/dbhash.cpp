@@ -32,6 +32,8 @@
 
 #include "mongo/db/commands/dbhash.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/catalog/database.h"
@@ -42,6 +44,8 @@
 #include "mongo/util/timer.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     DBHashCmd dbhashCmd;
 
@@ -78,7 +82,7 @@ namespace mongo {
         }
 
         *fromCache = false;
-        Collection* collection = db->getCollection( opCtx, fullCollectionName );
+        Collection* collection = db->getCollection( fullCollectionName );
         if ( !collection )
             return "";
 

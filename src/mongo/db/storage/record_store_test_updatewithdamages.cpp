@@ -30,11 +30,14 @@
 
 #include "mongo/db/storage/record_store_test_harness.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/record_id.h"
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/unittest/unittest.h"
 
+using boost::scoped_ptr;
 using std::string;
 
 namespace mongo {
@@ -43,6 +46,9 @@ namespace mongo {
     TEST( RecordStoreTestHarness, UpdateWithDamages ) {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+
+        if (!rs->updateWithDamagesSupported())
+            return;
 
         {
             scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
@@ -107,6 +113,9 @@ namespace mongo {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
+        if (!rs->updateWithDamagesSupported())
+            return;
+
         {
             scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             ASSERT_EQUALS( 0, rs->numRecords( opCtx.get() ) );
@@ -168,6 +177,9 @@ namespace mongo {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
+        if (!rs->updateWithDamagesSupported())
+            return;
+
         {
             scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             ASSERT_EQUALS( 0, rs->numRecords( opCtx.get() ) );
@@ -226,6 +238,9 @@ namespace mongo {
     TEST( RecordStoreTestHarness, UpdateWithNoDamages ) {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+
+        if (!rs->updateWithDamagesSupported())
+            return;
 
         {
             scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );

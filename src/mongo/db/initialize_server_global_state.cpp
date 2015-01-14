@@ -28,12 +28,17 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kControl
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/initialize_server_global_state.h"
 
 #include <boost/filesystem/operations.hpp>
+#include <iostream>
 #include <memory>
+#include <signal.h>
 
 #ifndef _WIN32
 #include <syslog.h>

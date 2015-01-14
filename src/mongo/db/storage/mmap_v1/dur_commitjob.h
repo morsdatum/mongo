@@ -1,38 +1,38 @@
-/* @file dur_commitjob.h used by dur.cpp */
-
 /**
-*    Copyright (C) 2009 10gen Inc.
-*
-*    This program is free software: you can redistribute it and/or  modify
-*    it under the terms of the GNU Affero General Public License, version 3,
-*    as published by the Free Software Foundation.
-*
-*    This program is distributed in the hope that it will be useful,
-*    but WITHOUT ANY WARRANTY; without even the implied warranty of
-*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*    GNU Affero General Public License for more details.
-*
-*    You should have received a copy of the GNU Affero General Public License
-*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*
-*    As a special exception, the copyright holders give permission to link the
-*    code of portions of this program with the OpenSSL library under certain
-*    conditions as described in each individual source file and distribute
-*    linked combinations including the program with the OpenSSL library. You
-*    must comply with the GNU Affero General Public License in all respects for
-*    all of the code used other than as permitted herein. If you modify file(s)
-*    with this exception, you may extend this exception to your version of the
-*    file(s), but you are not obligated to do so. If you do not wish to do so,
-*    delete this exception statement from your version. If you delete this
-*    exception statement from all source files in the program, then also delete
-*    it in the license file.
-*/
+ *    Copyright (C) 2009-2014 MongoDB Inc.
+ *
+ *    This program is free software: you can redistribute it and/or  modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *    As a special exception, the copyright holders give permission to link the
+ *    code of portions of this program with the OpenSSL library under certain
+ *    conditions as described in each individual source file and distribute
+ *    linked combinations including the program with the OpenSSL library. You
+ *    must comply with the GNU Affero General Public License in all respects for
+ *    all of the code used other than as permitted herein. If you modify file(s)
+ *    with this exception, you may extend this exception to your version of the
+ *    file(s), but you are not obligated to do so. If you do not wish to do so,
+ *    delete this exception statement from your version. If you delete this
+ *    exception statement from all source files in the program, then also delete
+ *    it in the license file.
+ */
 
 #pragma once
 
+#include <boost/noncopyable.hpp>
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/db/storage/mmap_v1/dur.h"
 #include "mongo/db/storage/mmap_v1/durop.h"
-#include "mongo/util/alignedbuilder.h"
 #include "mongo/util/concurrency/synchronization.h"
 
 namespace mongo {
@@ -106,7 +106,7 @@ namespace mongo {
         public:
             std::vector<WriteIntent> _intents;
             Already<127> _alreadyNoted;
-            std::vector< shared_ptr<DurOp> > _durOps; // all the ops other than basic writes
+            std::vector< boost::shared_ptr<DurOp> > _durOps; // all the ops other than basic writes
 
             /** reset the IntentsAndDurOps structure (empties all the above) */
             void clear();
@@ -127,21 +127,18 @@ namespace mongo {
                          other uses are in a read lock from a single thread (durThread)
         */
         class CommitJob : boost::noncopyable {
-            void _committingReset();
             ~CommitJob(){ verify(!"shouldn't destroy CommitJob!"); }
 
         public:
-            SimpleMutex groupCommitMutex;
             CommitJob();
 
             /** note an operation other than a "basic write". threadsafe (locks in the impl) */
-            void noteOp(shared_ptr<DurOp> p);
+            void noteOp(boost::shared_ptr<DurOp> p);
 
             /** record/note an intent to write */
             void note(void* p, int len);
 
-            std::vector< shared_ptr<DurOp> >& ops() {
-                groupCommitMutex.dassertLocked(); // this is what really makes the below safe
+            const std::vector<boost::shared_ptr<DurOp> >& ops() const {
                 return _intentsAndDurOps._durOps;                
             }
 
@@ -151,18 +148,9 @@ namespace mongo {
             bool hasWritten() const { return _hasWritten; }
 
         public:
-            /** these called by the groupCommit code as it goes along */
-            void commitingBegin();
-            /** the commit code calls this when data reaches the journal (on disk) */
-            void committingNotifyCommitted() { 
-                groupCommitMutex.dassertLocked();
-                _notify.notifyAll(_commitNumber); 
-            }
+
             /** we use the commitjob object over and over, calling reset() rather than reconstructing */
-            void committingReset() {
-                groupCommitMutex.dassertLocked();
-                _committingReset();
-            }
+            void committingReset();
 
         public:
             /** we check how much written and if it is getting to be a lot, we commit sooner. */
@@ -172,19 +160,21 @@ namespace mongo {
              * can be merged.  we sort here so the caller receives something they must 
              * keep const from their pov. */
             const std::vector<WriteIntent>& getIntentsSorted() {
-                groupCommitMutex.dassertLocked();
                 sort(_intentsAndDurOps._intents.begin(), _intentsAndDurOps._intents.end());
                 return _intentsAndDurOps._intents;
             }
 
-            bool _hasWritten;
+            SimpleMutex groupCommitMutex;
 
         private:
-            NotifyAll::When _commitNumber;
+            // Contains the write intents
+            bool _hasWritten;
             IntentsAndDurOps _intentsAndDurOps;
+
+            // Used to count the private map used bytes. Note that _lastNotedPos doesn't reset
+            // with each commit, but that is ok we aren't being that precise.
+            size_t _lastNotedPos;
             size_t _bytes;
-        public:
-            NotifyAll _notify;                  // for getlasterror fsync:true acknowledgements
         };
 
         extern CommitJob& commitJob;

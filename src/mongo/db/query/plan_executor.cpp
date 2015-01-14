@@ -28,6 +28,8 @@
 
 #include "mongo/db/query/plan_executor.h"
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/exec/multi_plan.h"
 #include "mongo/db/exec/pipeline_proxy.h"
@@ -36,12 +38,15 @@
 #include "mongo/db/exec/subplan.h"
 #include "mongo/db/exec/working_set.h"
 #include "mongo/db/exec/working_set_common.h"
+#include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/query/plan_yield_policy.h"
 #include "mongo/db/storage/record_fetcher.h"
 
 #include "mongo/util/stacktrace.h"
 
 namespace mongo {
+
+    using boost::shared_ptr;
 
     namespace {
 
@@ -233,6 +238,18 @@ namespace mongo {
     void PlanExecutor::saveState() {
         if (!_killed) {
             _root->saveState();
+        }
+
+        // Doc-locking storage engines drop their transactional context after saving state.
+        // The query stages inside this stage tree might buffer record ids (e.g. text, geoNear,
+        // mergeSort, sort) which are no longer protected by the storage engine's transactional
+        // boundaries. Force-fetch the documents for any such record ids so that we have our
+        // own copy in the working set.
+        //
+        // This is not necessary for covered plans, as such plans never use buffered record ids
+        // for index or collection lookup.
+        if (supportsDocLocking() && _collection && (!_qs.get() || _qs->root->fetched())) {
+            WorkingSetCommon::forceFetchAllLocs(_opCtx, _workingSet.get(), _collection);
         }
 
         _opCtx = NULL;
@@ -444,13 +461,13 @@ namespace mongo {
         // Collection can be null for an EOFStage plan, or other places where registration
         // is not needed.
         if (_exec->collection()) {
-            _exec->collection()->cursorManager()->registerExecutor(exec);
+            _exec->collection()->getCursorManager()->registerExecutor(exec);
         }
     }
 
     PlanExecutor::ScopedExecutorRegistration::~ScopedExecutorRegistration() {
         if (_exec->collection()) {
-            _exec->collection()->cursorManager()->deregisterExecutor(_exec);
+            _exec->collection()->getCursorManager()->deregisterExecutor(_exec);
         }
     }
 

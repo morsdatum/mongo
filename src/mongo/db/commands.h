@@ -63,6 +63,11 @@ namespace mutablebson {
         // The type of the first field in 'cmdObj' must be mongo::String. The first field is
         // interpreted as a collection name.
         std::string parseNsFullyQualified(const std::string& dbname, const BSONObj& cmdObj) const;
+
+        // The type of the first field in 'cmdObj' must be mongo::String or Symbol.
+        // The first field is interpreted as a collection name.
+        std::string parseNsCollectionRequired(const std::string& dbname,
+                                              const BSONObj& cmdObj) const;
     public:
 
         typedef StringMap<Command*> CommandMap;
@@ -282,6 +287,21 @@ namespace mutablebson {
         // by running a command.  Returns ErrorCodes::CommandResultSchemaViolation if "result" does
         // not look like the result of a command.
         static Status getStatusFromCommandResult(const BSONObj& result);
+
+        /**
+         * Parses cursor options from the command request object "cmdObj".  Used by commands that
+         * take cursor options.  The only cursor option currently supported is "cursor.batchSize".
+         *
+         * If a valid batch size was specified, returns Status::OK() and fills in "batchSize" with
+         * the specified value.  If no batch size was specified, returns Status::OK() and fills in
+         * "batchSize" with the provided default value.
+         *
+         * If an error occurred while parsing, returns an error Status.  If this is the case, the
+         * value pointed to by "batchSize" is unspecified.
+         */
+        static Status parseCommandCursorOptions(const BSONObj& cmdObj,
+                                                long long defaultBatchSize,
+                                                long long* batchSize);
 
         /**
          * Builds a cursor response object from the provided cursor identifiers and "firstBatch",

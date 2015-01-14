@@ -43,6 +43,7 @@
 #include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/platform/unordered_set.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/scopeguard.h"
 
@@ -99,7 +100,7 @@ namespace mongo {
     StatusWith<std::string> WiredTigerUtil::getMetadata(OperationContext* opCtx,
                                                         const StringData& uri) {
         invariant(opCtx);
-        WiredTigerCursor curwrap("metadata:", WiredTigerSession::kMetadataCursorId, opCtx);
+        WiredTigerCursor curwrap("metadata:", WiredTigerSession::kMetadataCursorId, false, opCtx);
         WT_CURSOR* cursor = curwrap.get();
         invariant(cursor);
         std::string strUri = uri.toString();
@@ -227,6 +228,11 @@ namespace mongo {
                 << "Application metadata for " << uri
                 << " has unsupported format version " << version);
         }
+
+        LOG(2) << "WiredTigerUtil::checkApplicationMetadataFormatVersion "
+               << " uri: " << uri
+               << " ok range " << minimumVersion << " -> " << maximumVersion
+               << " current: " << version;
 
         return Status::OK();
     }

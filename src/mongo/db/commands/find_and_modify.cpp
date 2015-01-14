@@ -32,6 +32,8 @@
 
 #include "mongo/db/commands/find_and_modify.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/commands.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/dbhelpers.h"
@@ -44,6 +46,8 @@
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     /* Find and Modify an object returning either the old (default) or new value*/
     class CmdFindAndModify : public Command {
@@ -73,13 +77,7 @@ namespace mongo {
                          BSONObjBuilder& result,
                          bool fromRepl) {
 
-            const std::string coll = cmdObj.firstElement().valuestrsafe();
-            if (coll.empty()) {
-                errmsg = "no collection name specified";
-                return false;
-            }
-
-            const std::string ns = dbname + '.' + coll;
+            const std::string ns = parseNsCollectionRequired(dbname, cmdObj);
 
             const BSONObj query = cmdObj.getObjectField("query");
             const BSONObj fields = cmdObj.getObjectField("fields");
@@ -126,6 +124,7 @@ namespace mongo {
                     break;
                 }
                 catch (const WriteConflictException&) {
+                    txn->getCurOp()->debug().writeConflicts++;
                     if ( attempt++ > 1 ) {
                         log() << "got WriteConflictException on findAndModify for " << ns
                               <<  " retrying attempt: " << attempt;
@@ -139,7 +138,7 @@ namespace mongo {
                 Lock::DBLock lk(txn->lockState(), dbname, MODE_X);
                 Client::Context ctx(txn, ns, false /* don't check version */);
                 Database* db = ctx.db();
-                if ( db->getCollection( txn, ns ) ) {
+                if ( db->getCollection( ns ) ) {
                     // someone else beat us to it, that's ok
                     // we might race while we unlock if someone drops
                     // but that's ok, we'll just do nothing and error out

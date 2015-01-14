@@ -35,6 +35,8 @@
 
 #pragma once
 
+#include <boost/shared_ptr.hpp>
+
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/s/chunk.h"
 #include "mongo/s/shard.h"
@@ -106,8 +108,7 @@ namespace mongo {
               _primary("config",
                        "",
                        0 /* maxSize */,
-                       false /* draining */,
-                       BSONArray() /* tags */),
+                       false /* draining */),
               _shardingEnabled(false),
               _lock("DBConfig") ,
               _hitConfigServerLock( "DBConfig::_hitConfigServerLock" ) {

@@ -31,6 +31,8 @@
 #ifndef S_BALANCER_POLICY_HEADER
 #define S_BALANCER_POLICY_HEADER
 
+#include <boost/noncopyable.hpp>
+
 #include "mongo/base/status_with.h"
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/db/jsobj.h"
@@ -182,13 +184,16 @@ namespace mongo {
         /** writes all state to log() */
         void dump() const;
         
-        static void populateShardInfoMap(const std::vector<Shard> allShards,
-                                         ShardInfoMap* shardInfo);
+        /**
+         * Retrieves shard metadata information from the config server as well as some stats
+         * from the shards.
+         */
+        static Status populateShardInfoMap(ShardInfoMap* shardInfo);
 
         /**
          * Note: jumbo and versions are not set.
          */
-        static void populateShardToChunksMap(const std::vector<Shard>& allShards,
+        static void populateShardToChunksMap(const ShardInfoMap& allShards,
                                              const ChunkManager& chunkMgr,
                                              ShardToChunksMap* shardToChunksMap);
 

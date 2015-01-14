@@ -42,6 +42,7 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/platform/random.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/startup_test.h"
 
 namespace mongo {
@@ -116,7 +117,7 @@ namespace mongo {
         Map _idToNS;
         unsigned _nextId;
 
-        SecureRandom* _secureRandom;
+        boost::scoped_ptr<SecureRandom> _secureRandom;
     };
 
     // Note that "globalCursorIdCache" must be declared before "globalCursorManager", as the latter
@@ -138,17 +139,16 @@ namespace mongo {
     GlobalCursorIdCache::GlobalCursorIdCache()
         : _mutex( "GlobalCursorIdCache" ),
           _nextId( 0 ),
-          _secureRandom( NULL ) {
+          _secureRandom() {
     }
 
     GlobalCursorIdCache::~GlobalCursorIdCache() {
-        // we're just going to leak everything, as it doesn't matter
     }
 
     int64_t GlobalCursorIdCache::nextSeed() {
         SimpleMutex::scoped_lock lk( _mutex );
         if ( !_secureRandom )
-            _secureRandom = SecureRandom::create();
+            _secureRandom.reset(SecureRandom::create());
         return _secureRandom->nextInt64();
     }
 
@@ -179,69 +179,88 @@ namespace mongo {
     }
 
     bool GlobalCursorIdCache::eraseCursor(OperationContext* txn, CursorId id, bool checkAuth) {
-        string ns;
-        {
-            SimpleMutex::scoped_lock lk( _mutex );
-            unsigned nsid = idFromCursorId( id );
-            Map::const_iterator it = _idToNS.find( nsid );
-            if ( it == _idToNS.end() ) {
+        // Figure out what the namespace of this cursor is.
+        std::string ns;
+        if (globalCursorManager->ownsCursorId(id)) {
+            ClientCursorPin pin(globalCursorManager.get(), id);
+            if (!pin.c()) {
+                // No such cursor.  TODO: Consider writing to audit log here (even though we don't
+                // have a namespace).
+                return false;
+            }
+            ns = pin.c()->ns();
+        }
+        else {
+            SimpleMutex::scoped_lock lk(_mutex);
+            unsigned nsid = idFromCursorId(id);
+            Map::const_iterator it = _idToNS.find(nsid);
+            if (it == _idToNS.end()) {
+                // No namespace corresponding to this cursor id prefix.  TODO: Consider writing to
+                // audit log here (even though we don't have a namespace).
                 return false;
             }
             ns = it->second;
         }
+        const NamespaceString nss(ns);
+        invariant(nss.isValid());
 
-        const NamespaceString nss( ns );
-
-        if ( checkAuth ) {
+        // Check if we are authorized to erase this cursor.
+        if (checkAuth) {
             AuthorizationSession* as = txn->getClient()->getAuthorizationSession();
-            bool isAuthorized = as->isAuthorizedForActionsOnNamespace(
-                                                nss, ActionType::killCursors);
-            if ( !isAuthorized ) {
-                audit::logKillCursorsAuthzCheck( txn->getClient(),
-                                                 nss,
-                                                 id,
-                                                 ErrorCodes::Unauthorized );
+            Status authorizationStatus = as->checkAuthForKillCursors(nss, id);
+            if (!authorizationStatus.isOK()) {
+                audit::logKillCursorsAuthzCheck(txn->getClient(),
+                                                nss,
+                                                id,
+                                                ErrorCodes::Unauthorized);
                 return false;
             }
         }
 
-        if (ns == globalCursorManager->ns()) {
+        // If this cursor is owned by the global cursor manager, ask it to erase the cursor for us.
+        if (globalCursorManager->ownsCursorId(id)) {
             return globalCursorManager->eraseCursor(txn, id, checkAuth);
         }
 
+        // If not, then the cursor must be owned by a collection.  Erase the cursor under the
+        // collection lock (to prevent the collection from going away during the erase).
         AutoGetCollectionForRead ctx(txn, nss);
-        if (!ctx.getDb()) {
-            return false;
-        }
-
         Collection* collection = ctx.getCollection();
-        if ( !collection ) {
-            if ( checkAuth )
-                audit::logKillCursorsAuthzCheck( txn->getClient(),
-                                                 nss,
-                                                 id,
-                                                 ErrorCodes::CursorNotFound );
+        if (!collection) {
+            if (checkAuth)
+                audit::logKillCursorsAuthzCheck(txn->getClient(),
+                                                nss,
+                                                id,
+                                                ErrorCodes::CursorNotFound);
             return false;
         }
-        return collection->cursorManager()->eraseCursor(txn, id, checkAuth);
+        return collection->getCursorManager()->eraseCursor(txn, id, checkAuth);
     }
 
     std::size_t GlobalCursorIdCache::timeoutCursors(OperationContext* txn, int millisSinceLastCall) {
+        size_t totalTimedOut = 0;
+
+        // Time out the cursors from the global cursor manager.
+        totalTimedOut += globalCursorManager->timeoutCursors( millisSinceLastCall );
+
+        // Compute the set of collection names that we have to time out cursors for.
         vector<string> todo;
         {
             SimpleMutex::scoped_lock lk( _mutex );
-            for ( Map::const_iterator i = _idToNS.begin(); i != _idToNS.end(); ++i )
+            for ( Map::const_iterator i = _idToNS.begin(); i != _idToNS.end(); ++i ) {
+                if (globalCursorManager->ownsCursorId(cursorIdFromParts(i->first, 0))) {
+                    // Skip the global cursor manager, since we handle it above (and it's not
+                    // associated with a collection).
+                    continue;
+                }
                 todo.push_back( i->second );
+            }
         }
 
-        size_t totalTimedOut = 0;
-
+        // For each collection, time out its cursors under the collection lock (to prevent the
+        // collection from going away during the erase).
         for ( unsigned i = 0; i < todo.size(); i++ ) {
             const std::string& ns = todo[i];
-            if ( ns == globalCursorManager->ns() ) {
-                totalTimedOut += globalCursorManager->timeoutCursors( millisSinceLastCall );
-                continue;
-            }
 
             AutoGetCollectionForRead ctx(txn, ns);
             if (!ctx.getDb()) {
@@ -253,7 +272,7 @@ namespace mongo {
                 continue;
             }
 
-            totalTimedOut += collection->cursorManager()->timeoutCursors( millisSinceLastCall );
+            totalTimedOut += collection->getCursorManager()->timeoutCursors( millisSinceLastCall );
         }
 
         return totalTimedOut;
@@ -266,8 +285,8 @@ namespace mongo {
     }
 
     std::size_t CursorManager::timeoutCursorsGlobal(OperationContext* txn,
-        int millisSinceLastCall) {;
-    return globalCursorIdCache->timeoutCursors(txn, millisSinceLastCall);
+                                                    int millisSinceLastCall) {
+        return globalCursorIdCache->timeoutCursors(txn, millisSinceLastCall);
     }
 
     int CursorManager::eraseCursorGlobalIfAuthorized(OperationContext* txn, int n,
@@ -458,11 +477,11 @@ namespace mongo {
         cursor->unsetPinned();
     }
 
-    bool CursorManager::ownsCursorId( CursorId cursorId ) {
+    bool CursorManager::ownsCursorId( CursorId cursorId ) const {
         return _collectionCacheRuntimeId == idFromCursorId( cursorId );
     }
 
-    void CursorManager::getCursorIds( std::set<CursorId>* openCursors ) {
+    void CursorManager::getCursorIds( std::set<CursorId>* openCursors ) const {
         SimpleMutex::scoped_lock lk( _mutex );
 
         for ( CursorMap::const_iterator i = _cursors.begin(); i != _cursors.end(); ++i ) {
@@ -471,7 +490,7 @@ namespace mongo {
         }
     }
 
-    size_t CursorManager::numCursors(){
+    size_t CursorManager::numCursors() const {
         SimpleMutex::scoped_lock lk( _mutex );
         return _cursors.size();
     }

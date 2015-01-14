@@ -30,11 +30,14 @@
 
 #include "mongo/db/query/explain.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/db/exec/multi_plan.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/query_planner.h"
+#include "mongo/db/query/query_settings.h"
 #include "mongo/db/query/stage_builder.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/server_options.h"
@@ -45,6 +48,7 @@
 namespace {
 
     using namespace mongo;
+    using boost::scoped_ptr;
 
     /**
      * Traverse the tree rooted at 'root', and add all tree nodes into the list 'flattened'.
@@ -487,6 +491,21 @@ namespace mongo {
 
         plannerBob.append("plannerVersion", QueryPlanner::kPlannerVersion);
         plannerBob.append("namespace", exec->ns());
+
+        // Find whether there is an index filter set for the query shape. The 'indexFilterSet'
+        // field will always be false in the case of EOF or idhack plans.
+        bool indexFilterSet = false;
+        if (exec->collection() && exec->getCanonicalQuery()) {
+            const Collection* collection = exec->collection();
+            QuerySettings* querySettings = collection->infoCache()->getQuerySettings();
+            AllowedIndices* allowedIndicesRaw;
+            if (querySettings->getAllowedIndices(*exec->getCanonicalQuery(), &allowedIndicesRaw)) {
+                // Found an index filter set on the query shape.
+                boost::scoped_ptr<AllowedIndices> allowedIndices(allowedIndicesRaw);
+                indexFilterSet = true;
+            }
+        }
+        plannerBob.append("indexFilterSet", indexFilterSet);
 
         // In general we should have a canonical query, but sometimes we may avoid
         // creating a canonical query as an optimization (specifically, the update system

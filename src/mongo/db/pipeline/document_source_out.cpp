@@ -26,11 +26,17 @@
  * it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document_source.h"
 
 namespace mongo {
+
+    using boost::intrusive_ptr;
+
     const char DocumentSourceOut::outName[] = "$out";
 
     DocumentSourceOut::~DocumentSourceOut() {

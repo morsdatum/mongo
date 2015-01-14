@@ -34,6 +34,8 @@
 
 #include "mongo/db/cloner.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/base/status.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclientinterface.h"
@@ -53,12 +55,14 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/isself.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
 
     MONGO_EXPORT_SERVER_PARAMETER(skipCorruptDocumentsWhenCloning, bool, false);
 
@@ -112,14 +116,22 @@ namespace mongo {
             invariant(from_collection.coll() != "system.indexes");
 
             // XXX: can probably take dblock instead
-            ScopedTransaction transaction(txn, MODE_X);
-            scoped_ptr<Lock::GlobalWrite> lk(new Lock::GlobalWrite(txn->lockState()));
+            scoped_ptr<ScopedTransaction> scopedXact(new ScopedTransaction(txn, MODE_X));
+            scoped_ptr<Lock::GlobalWrite> globalWriteLock(new Lock::GlobalWrite(txn->lockState()));
 
             // Make sure database still exists after we resume from the temp release
             Database* db = dbHolder().openDb(txn, _dbName);
 
-            Collection* collection = db->getCollection( txn, to_collection );
-            if (!collection) {
+            bool createdCollection = false;
+            Collection* collection = NULL;
+
+            collection = db->getCollection( to_collection );
+            if ( !collection ) {
+                massert( 17321,
+                         str::stream()
+                         << "collection dropped during clone ["
+                         << to_collection.ns() << "]",
+                         !createdCollection );
                 WriteUnitOfWork wunit(txn);
                 collection = db->createCollection(txn, to_collection.ns());
                 verify(collection);
@@ -148,9 +160,13 @@ namespace mongo {
                     }
 
                     if (_mayYield) {
-                        lk.reset();
+                        scopedXact.reset();
+                        globalWriteLock.reset();
+
                         txn->getCurOp()->yielded();
-                        lk.reset(new Lock::GlobalWrite(txn->lockState()));
+
+                        scopedXact.reset(new ScopedTransaction(txn, MODE_X));
+                        globalWriteLock.reset(new Lock::GlobalWrite(txn->lockState()));
 
                         // Check if everything is still all right.
                         if (logForRepl) {
@@ -168,7 +184,7 @@ namespace mongo {
                                               << " dropped while cloning",
                                 db != NULL);
 
-                        collection = db->getCollection(txn, to_collection);
+                        collection = db->getCollection(to_collection);
                         uassert(28594,
                                 str::stream() << "Collection " << to_collection.ns()
                                               << " dropped while cloning",
@@ -290,7 +306,7 @@ namespace mongo {
         // during the temp release
         Database* db = dbHolder().openDb(txn, toDBName);
 
-        Collection* collection = db->getCollection( txn, to_collection );
+        Collection* collection = db->getCollection( to_collection );
         if ( !collection ) {
             WriteUnitOfWork wunit(txn);
             collection = db->createCollection( txn, to_collection.ns() );
@@ -448,12 +464,15 @@ namespace mongo {
             }
         }
 
+        // Gather the list of collections to clone
         list<BSONObj> toClone;
-        if ( clonedColls ) clonedColls->clear();
+        if (clonedColls) {
+            clonedColls->clear();
+        }
+
         {
-            /* todo: we can put these releases inside dbclient or a dbclient specialization.
-               or just wait until we get rid of global lock anyway.
-               */
+            // getCollectionInfos may make a remote call, which may block indefinitely, so release
+            // the global lock that we are entering with.
             Lock::TempRelease tempRelease(txn->lockState());
 
             list<BSONObj> raw = _conn->getCollectionInfos( opts.fromDB );
@@ -480,7 +499,7 @@ namespace mongo {
                 verify( !e.eoo() );
                 verify( e.type() == String );
 
-                NamespaceString ns( opts.fromDB, e.valuestr() );
+                const NamespaceString ns(opts.fromDB, e.valuestr());
 
                 if( ns.isSystem() ) {
                     /* system.users and s.js is cloned -- but nothing else from system.
@@ -503,7 +522,10 @@ namespace mongo {
                     LOG(2) << "\t\t not ignoring collection " << ns;
                 }
 
-                if ( clonedColls ) clonedColls->insert( ns.ns() );
+                if (clonedColls) {
+                    clonedColls->insert(ns.ns());
+                }
+
                 toClone.push_back( collection.getOwned() );
             }
         }
@@ -515,27 +537,29 @@ namespace mongo {
                 const char* collectionName = collection["name"].valuestr();
                 BSONObj options = collection.getObjectField("options");
 
-                NamespaceString from_name( opts.fromDB, collectionName );
-                NamespaceString to_name( toDBName, collectionName );
+                const NamespaceString from_name(opts.fromDB, collectionName);
+                const NamespaceString to_name(toDBName, collectionName);
 
-                Database* db;
+                Database* db = dbHolder().openDb(txn, toDBName);
+
                 {
                     WriteUnitOfWork wunit(txn);
-                    // Copy releases the lock, so we need to re-load the database. This should
-                    // probably throw if the database has changed in between, but for now preserve
-                    // the existing behaviour.
-                    db = dbHolder().openDb(txn, toDBName);
 
                     // we defer building id index for performance - building it in batch is much
                     // faster
-                    Status createStatus = userCreateNS( txn, db, to_name.ns(), options,
-                                                        opts.logForRepl, false );
+                    Status createStatus = userCreateNS(txn,
+                                                       db,
+                                                       to_name.ns(),
+                                                       options,
+                                                       opts.logForRepl,
+                                                       false);
                     if ( !createStatus.isOK() ) {
                         errmsg = str::stream() << "failed to create collection \""
                                                << to_name.ns() << "\": "
                                                << createStatus.reason();
                         return false;
                     }
+
                     wunit.commit();
                 }
 
@@ -555,12 +579,15 @@ namespace mongo {
                      opts.mayBeInterrupted,
                      q);
 
+                // Copy releases the lock, so we need to re-load the database. This should
+                // probably throw if the database has changed in between, but for now preserve
+                // the existing behaviour.
                 db = dbHolder().get(txn, toDBName);
                 uassert(18645,
                         str::stream() << "database " << toDBName << " dropped during clone",
                         db);
 
-                Collection* c = db->getCollection( txn, to_name );
+                Collection* c = db->getCollection( to_name );
                 if ( c && !c->getIndexCatalog()->haveIdIndex( txn ) ) {
                     // We need to drop objects with duplicate _ids because we didn't do a true
                     // snapshot and this is before applying oplog operations that occur during the

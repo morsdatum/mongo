@@ -42,7 +42,8 @@ namespace mongo {
         class InMemoryFactory : public StorageEngine::Factory {
         public:
             virtual ~InMemoryFactory() { }
-            virtual StorageEngine* create(const StorageGlobalParams& params) const {
+            virtual StorageEngine* create(const StorageGlobalParams& params,
+                                          const StorageEngineLockFile& lockFile) const {
                 KVStorageEngineOptions options;
                 options.directoryPerDB = params.directoryperdb;
                 options.forRepair = params.repair;
@@ -60,6 +61,15 @@ namespace mongo {
 
             virtual Status validateIndexStorageOptions(const BSONObj& options) const {
                 return Status::OK();
+            }
+
+            virtual Status validateMetadata(const StorageEngineMetadata& metadata,
+                                            const StorageGlobalParams& params) const {
+                return Status::OK();
+            }
+
+            virtual BSONObj createMetadataOptions(const StorageGlobalParams& params) const {
+                return BSONObj();
             }
         };
 

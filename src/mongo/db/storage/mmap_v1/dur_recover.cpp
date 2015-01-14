@@ -35,17 +35,15 @@
 #include "mongo/db/storage/mmap_v1/dur_recover.h"
 
 #include <boost/filesystem/operations.hpp>
+#include <boost/noncopyable.hpp>
+#include <boost/shared_ptr.hpp>
 #include <fcntl.h>
 #include <iomanip>
+#include <iostream>
 #include <sys/stat.h>
 
-#include "mongo/db/curop.h"
-#include "mongo/db/catalog/database.h"
-#include "mongo/db/db.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/storage/storage_engine.h"
-#include "mongo/db/storage/mmap_v1/catalog/namespace.h"
-#include "mongo/db/storage/mmap_v1/dur.h"
 #include "mongo/db/storage/mmap_v1/dur_commitjob.h"
 #include "mongo/db/storage/mmap_v1/dur_journal.h"
 #include "mongo/db/storage/mmap_v1/dur_journalformat.h"
@@ -57,11 +55,11 @@
 #include "mongo/util/bufreader.h"
 #include "mongo/util/checksum.h"
 #include "mongo/util/compress.h"
+#include "mongo/util/exit.h"
+#include "mongo/util/hex.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/startup_test.h"
-
-using namespace mongoutils;
 
 namespace mongo {
 
@@ -87,7 +85,7 @@ namespace mongo {
             const JEntry *e;  // local db sentinel is already parsed out here into dbName
 
             // if not one of the two simple JEntry's above, this is the operation:
-            shared_ptr<DurOp> op;
+            boost::shared_ptr<DurOp> op;
         };
 
         void removeJournalFiles();
@@ -186,8 +184,7 @@ namespace mongo {
 
                     case JEntry::OpCode_DbContext: {
                         _lastDbName = (const char*) _entries->pos();
-                        const unsigned limit = std::min((unsigned)Namespace::MaxNsLenWithNUL,
-                                                        _entries->remaining());
+                        const unsigned limit = _entries->remaining();
                         const unsigned len = strnlen(_lastDbName, limit);
                         if (_lastDbName[len] != '\0') {
                             log() << "problem processing journal file during recovery";
@@ -290,7 +287,6 @@ namespace mongo {
             //TODO(mathias): look into making some of these dasserts
             verify(entry.e);
             verify(entry.dbName);
-            verify(strnlen(entry.dbName, MaxDatabaseNameLen) < MaxDatabaseNameLen);
 
             DurableMappedFile *mmf = last.newEntry(entry, *this);
 
@@ -300,7 +296,7 @@ namespace mongo {
 
                 void* dest = (char*)mmf->view_write() + entry.e->ofs;
                 memcpy(dest, entry.e->srcData(), entry.e->len);
-                stats.curr->_writeToDataFilesBytes += entry.e->len;
+                stats.curr()->_writeToDataFilesBytes += entry.e->len;
             }
             else {
                 massert(13622, "Trying to write past end of file in WRITETODATAFILES", _recovering);
@@ -340,7 +336,6 @@ namespace mongo {
 
         DurableMappedFile* RecoveryJob::getDurableMappedFile(const ParsedJournalEntry& entry) {
             verify(entry.dbName);
-            verify(strnlen(entry.dbName, MaxDatabaseNameLen) < MaxDatabaseNameLen);
 
             const string fn = fileName(entry.dbName, entry.e->getFileNo());
             MongoFile* file;
@@ -604,12 +599,6 @@ namespace mongo {
             OperationContextImpl txn;
             ScopedTransaction transaction(&txn, MODE_X);
             Lock::GlobalWrite lk(txn.lockState());
-
-            // can't lock groupCommitMutex here as
-            //   DurableMappedFile::close()->closingFileNotication()->groupCommit() will lock it
-            //   and that would be recursive.
-            //
-            // SimpleMutex::scoped_lock lk2(commitJob.groupCommitMutex);
 
             _recover(); // throws on interruption
         }

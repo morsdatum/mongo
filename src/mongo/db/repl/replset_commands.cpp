@@ -28,7 +28,12 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kCommand
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
+
+#include "mongo/db/repl/replset_commands.h"
 
 #include "mongo/base/init.h"
 #include "mongo/base/status.h"
@@ -41,12 +46,11 @@
 #include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
-#include "mongo/db/repl/repl_coordinator_external_state_impl.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
 #include "mongo/db/repl/repl_set_seed_list.h"
-#include "mongo/db/repl/replset_commands.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_external_state_impl.h"
 #include "mongo/db/repl/scoped_conn.h"
 #include "mongo/db/repl/update_position_args.h"
 #include "mongo/db/storage/storage_engine.h"

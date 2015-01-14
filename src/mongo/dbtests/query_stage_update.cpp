@@ -30,6 +30,8 @@
  * This file tests db/exec/update.cpp (UpdateStage).
  */
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/dbdirectclient.h"
@@ -47,6 +49,8 @@
 #include "mongo/dbtests/dbtests.h"
 
 namespace QueryStageUpdate {
+
+    using boost::scoped_ptr;
 
     class QueryStageUpdateBase {
     public:
@@ -255,7 +259,7 @@ namespace QueryStageUpdate {
                 OpDebug* opDebug = &curOp.debug();
                 UpdateDriver driver( (UpdateDriver::Options()) );
                 Database* db = ctx.ctx().db();
-                Collection* coll = db->getCollection(&_txn, ns());
+                Collection* coll = db->getCollection(ns());
 
                 // Get the RecordIds that would be returned by an in-order scan.
                 vector<RecordId> locs;

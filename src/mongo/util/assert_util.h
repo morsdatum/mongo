@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include <iostream>
 #include <typeinfo>
 #include <string>
 
@@ -105,7 +104,6 @@ namespace mongo {
     class DBException;
     MONGO_CLIENT_API std::string causedBy( const DBException& e );
     MONGO_CLIENT_API std::string causedBy( const std::string& e );
-    MONGO_CLIENT_API bool inShutdown();
 
     /** Most mongo exceptions inherit from this; this is commonly caught in most threads */
     class MONGO_CLIENT_API DBException : public std::exception {

@@ -32,6 +32,8 @@
 
 #include "mongo/db/query/find.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
@@ -47,7 +49,7 @@
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/query/qlog.h"
 #include "mongo/db/query/query_planner_params.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/db/storage/oplog_hack.h"
@@ -59,6 +61,8 @@
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
+
+using boost::scoped_ptr;
 
 namespace mongo {
     // The .h for this in find_constants.h.
@@ -203,7 +207,7 @@ namespace mongo {
             ctx.reset(new AutoGetCollectionForRead(txn, nss));
             Collection* collection = ctx->getCollection();
             uassert( 17356, "collection dropped between getMore calls", collection );
-            cursorManager = collection->cursorManager();
+            cursorManager = collection->getCursorManager();
         }
 
         QLOG() << "Running getMore, cursorid: " << cursorid << endl;
@@ -252,12 +256,10 @@ namespace mongo {
         else {
             // Check for spoofing of the ns such that it does not match the one originally
             // there for the cursor.
-            if (globalCursorManager->ownsCursorId(cursorid)) {
-                // TODO Implement auth check for global cursors.  SERVER-16657.
-            }
-            else {
-                uassert(17011, "auth error", str::equals(ns, cc->ns().c_str()));
-            }
+            uassert(ErrorCodes::Unauthorized,
+                    str::stream() << "Requested getMore on namespace " << ns << ", but cursor "
+                                  << cursorid << " belongs to namespace " << cc->ns(),
+                    ns == cc->ns());
             *isCursorAuthorized = true;
 
             // Restore the RecoveryUnit if we need to.
@@ -536,11 +538,11 @@ namespace mongo {
     std::string runQuery(OperationContext* txn,
                          Message& m,
                          QueryMessage& q,
+                         const NamespaceString& nss,
                          CurOp& curop,
                          Message &result,
                          bool fromDBDirectClient) {
         // Validate the namespace.
-        const NamespaceString nss(q.ns);
         uassert(16256, str::stream() << "Invalid ns [" << nss.ns() << "]", nss.isValid());
 
         // Set curop information.
@@ -659,7 +661,6 @@ namespace mongo {
             BSONObj explainObj = explainBob.obj();
             bb.appendBuf((void*)explainObj.objdata(), explainObj.objsize());
 
-            curop.debug().iscommand = true;
             // TODO: Does this get overwritten/do we really need to set this twice?
             curop.debug().query = q.query;
 
@@ -839,7 +840,9 @@ namespace mongo {
 
             // Allocate a new ClientCursor.  We don't have to worry about leaking it as it's
             // inserted into a global map by its ctor.
-            ClientCursor* cc = new ClientCursor(collection->cursorManager(), exec.get(),
+            ClientCursor* cc = new ClientCursor(collection->getCursorManager(),
+                                                exec.release(),
+                                                nss.ns(),
                                                 pq.getOptions().toInt(),
                                                 pq.getFilter());
             ccId = cc->cursorid();
@@ -861,9 +864,6 @@ namespace mongo {
 
             QLOG() << "caching executor with cursorid " << ccId
                    << " after returning " << numResults << " results" << endl;
-
-            // ClientCursor takes ownership of executor.  Release to make sure it's not deleted.
-            exec.release();
 
             // TODO document
             if (pq.getOptions().oplogReplay && !slaveReadTill.isNull()) {

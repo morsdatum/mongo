@@ -22,6 +22,8 @@
 
 #include "mongo/dbtests/dbtests.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/db.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/exec/oplogstart.h"
@@ -35,6 +37,8 @@
 
 namespace OplogStartTests {
 
+    using boost::scoped_ptr;
+
     class Base {
     public:
         Base() : _txn(),
@@ -44,7 +48,7 @@ namespace OplogStartTests {
                  _context(&_txn, ns()),
                  _client(&_txn) {
 
-            Collection* c = _context.db()->getCollection(&_txn, ns());
+            Collection* c = _context.db()->getCollection(ns());
             if (!c) {
                 c = _context.db()->createCollection(&_txn, ns());
             }
@@ -71,7 +75,7 @@ namespace OplogStartTests {
         }
 
         Collection* collection() {
-            return _context.db()->getCollection( &_txn, ns() );
+            return _context.db()->getCollection( ns() );
         }
 
         DBDirectClient* client() { return &_client; }

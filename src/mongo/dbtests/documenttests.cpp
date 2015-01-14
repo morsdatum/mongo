@@ -28,12 +28,16 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/db/pipeline/value.h"
 #include "mongo/dbtests/dbtests.h"
+#include "mongo/util/print.h"
 
 namespace DocumentTests {
 
@@ -1292,9 +1296,9 @@ namespace DocumentTests {
                 assertComparison(-1, Value(vector<Value>()), Value(BSONBinData("", 0, MD5Type)));
                 assertComparison(-1, Value(BSONBinData("", 0, MD5Type)), Value(mongo::OID()));
                 assertComparison(-1, Value(mongo::OID()), Value(false));
-                assertComparison(-1, Value(false), Value(OpTime()));
-                assertComparison(0,  Value(OpTime()), Value(Date_t(0)));
-                assertComparison(-1, Value(Date_t(0)), Value(BSONRegEx("")));
+                assertComparison(-1, Value(false), Value(Date_t(0)));
+                assertComparison(-1, Value(Date_t(0)), Value(OpTime()));
+                assertComparison(-1, Value(OpTime()), Value(BSONRegEx("")));
                 assertComparison(-1, Value(BSONRegEx("")), Value(BSONDBRef("", mongo::OID())));
                 assertComparison(-1, Value(BSONDBRef("", mongo::OID())), Value(BSONCode("")));
                 assertComparison(-1, Value(BSONCode("")), Value(BSONCodeWScope("", BSONObj())));

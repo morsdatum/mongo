@@ -44,7 +44,7 @@
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/query/explain.h"
 #include "mongo/db/query/get_executor.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/s/d_state.h"
@@ -229,7 +229,7 @@ namespace mongo {
             // Get a pointer to the (possibly NULL) collection.
             Collection* collection = NULL;
             if ( autoDb.getDb() ) {
-                collection = autoDb.getDb()->getCollection( txn, nsString.ns() );
+                collection = autoDb.getDb()->getCollection( nsString.ns() );
             }
 
             PlanExecutor* rawExec;
@@ -274,7 +274,7 @@ namespace mongo {
             // Get a pointer to the (possibly NULL) collection.
             Collection* collection = NULL;
             if (autoDb.getDb()) {
-                collection = autoDb.getDb()->getCollection(txn, nsString.ns());
+                collection = autoDb.getDb()->getCollection(nsString.ns());
             }
 
             PlanExecutor* rawExec;

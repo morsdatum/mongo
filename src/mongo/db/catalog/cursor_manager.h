@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/invalidation_type.h"
 #include "mongo/db/namespace_string.h"
@@ -53,8 +55,6 @@ namespace mongo {
         ~CursorManager();
 
         // -----------------
-
-        std::string ns() { return _nss.ns(); }
 
         /**
          * @param collectionGoingAway Pass as true if the Collection instance is going away.
@@ -99,9 +99,17 @@ namespace mongo {
 
         bool eraseCursor(OperationContext* txn, CursorId id, bool checkAuth );
 
-        bool ownsCursorId( CursorId cursorId );
-        void getCursorIds( std::set<CursorId>* openCursors );
-        std::size_t numCursors();
+        /**
+         * Returns true if the space of cursor ids that cursor manager is responsible for includes
+         * the given cursor id.  Otherwise, returns false.
+         *
+         * The return value of this method does not indicate any information about whether or not a
+         * cursor actually exists with the given cursor id.  Use the find() method for that purpose.
+         */
+        bool ownsCursorId( CursorId cursorId ) const;
+
+        void getCursorIds( std::set<CursorId>* openCursors ) const;
+        std::size_t numCursors() const;
 
         /**
          * @param pin - if true, will try to pin cursor
@@ -133,9 +141,9 @@ namespace mongo {
 
         NamespaceString _nss;
         unsigned _collectionCacheRuntimeId;
-        scoped_ptr<PseudoRandom> _random;
+        boost::scoped_ptr<PseudoRandom> _random;
 
-        SimpleMutex _mutex;
+        mutable SimpleMutex _mutex;
 
         typedef unordered_set<PlanExecutor*> ExecSet;
         ExecSet _nonCachedExecutors;

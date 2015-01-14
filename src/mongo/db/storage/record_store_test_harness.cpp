@@ -30,10 +30,15 @@
 
 #include "mongo/db/storage/record_store_test_harness.h"
 
+#include <boost/scoped_ptr.hpp>
+
 #include "mongo/db/storage/record_store.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
+
+    using boost::scoped_ptr;
+
     TEST( RecordStoreTestHarness, Simple1 ) {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
@@ -272,6 +277,9 @@ namespace mongo {
     TEST( RecordStoreTestHarness, UpdateInPlace1 ) {
         scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
         scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+
+        if (!rs->updateWithDamagesSupported())
+            return;
 
         string s1 = "aaa111bbb";
         string s2 = "aaa222bbb";

@@ -30,8 +30,8 @@
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/exec/fetch.h"
-#include "mongo/db/exec/mock_stage.h"
 #include "mongo/db/exec/plan_stage.h"
+#include "mongo/db/exec/queued_data_stage.h"
 #include "mongo/db/exec/sort.h"
 #include "mongo/db/json.h"
 #include "mongo/db/query/plan_executor.h"
@@ -77,7 +77,7 @@ namespace QueryStageSortTests {
         /**
          * We feed a mix of (key, unowned, owned) data to the sort stage.
          */
-        void insertVarietyOfObjects(MockStage* ms, Collection* coll) {
+        void insertVarietyOfObjects(QueuedDataStage* ms, Collection* coll) {
             set<RecordId> locs;
             getLocs(&locs, coll);
 
@@ -111,7 +111,7 @@ namespace QueryStageSortTests {
          */
         void sortAndCheck(int direction, Collection* coll) {
             WorkingSet* ws = new WorkingSet();
-            MockStage* ms = new MockStage(ws);
+            QueuedDataStage* ms = new QueuedDataStage(ws);
 
             // Insert a mix of the various types of data.
             insertVarietyOfObjects(ms, coll);
@@ -190,7 +190,7 @@ namespace QueryStageSortTests {
         void run() {
             Client::WriteContext ctx(&_txn, ns());
             Database* db = ctx.ctx().db();
-            Collection* coll = db->getCollection(&_txn, ns());
+            Collection* coll = db->getCollection(ns());
             if (!coll) {
                 WriteUnitOfWork wuow(&_txn);
                 coll = db->createCollection(&_txn, ns());
@@ -210,7 +210,7 @@ namespace QueryStageSortTests {
         void run() {
             Client::WriteContext ctx(&_txn, ns());
             Database* db = ctx.ctx().db();
-            Collection* coll = db->getCollection(&_txn, ns());
+            Collection* coll = db->getCollection(ns());
             if (!coll) {
                 WriteUnitOfWork wuow(&_txn);
                 coll = db->createCollection(&_txn, ns());
@@ -239,7 +239,7 @@ namespace QueryStageSortTests {
         void run() {
             Client::WriteContext ctx(&_txn, ns());
             Database* db = ctx.ctx().db();
-            Collection* coll = db->getCollection(&_txn, ns());
+            Collection* coll = db->getCollection(ns());
             if (!coll) {
                 WriteUnitOfWork wuow(&_txn);
                 coll = db->createCollection(&_txn, ns());
@@ -259,7 +259,7 @@ namespace QueryStageSortTests {
         void run() {
             Client::WriteContext ctx(&_txn, ns());
             Database* db = ctx.ctx().db();
-            Collection* coll = db->getCollection(&_txn, ns());
+            Collection* coll = db->getCollection(ns());
             if (!coll) {
                 WriteUnitOfWork wuow(&_txn);
                 coll = db->createCollection(&_txn, ns());
@@ -274,7 +274,7 @@ namespace QueryStageSortTests {
 
             // Build the mock scan stage which feeds the data.
             WorkingSet ws;
-            auto_ptr<MockStage> ms(new MockStage(&ws));
+            auto_ptr<QueuedDataStage> ms(new QueuedDataStage(&ws));
             insertVarietyOfObjects(ms.get(), coll);
 
             SortStageParams params;
@@ -351,7 +351,7 @@ namespace QueryStageSortTests {
         void run() {
             Client::WriteContext ctx(&_txn, ns());
             Database* db = ctx.ctx().db();
-            Collection* coll = db->getCollection(&_txn, ns());
+            Collection* coll = db->getCollection(ns());
             if (!coll) {
                 WriteUnitOfWork wuow(&_txn);
                 coll = db->createCollection(&_txn, ns());
@@ -359,7 +359,7 @@ namespace QueryStageSortTests {
             }
 
             WorkingSet* ws = new WorkingSet();
-            MockStage* ms = new MockStage(ws);
+            QueuedDataStage* ms = new QueuedDataStage(ws);
 
             for (int i = 0; i < numObj(); ++i) {
                 WorkingSetMember member;

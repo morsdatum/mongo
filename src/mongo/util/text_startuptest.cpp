@@ -25,13 +25,15 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/util/text.h"
 
 #include "mongo/util/startup_test.h"
 #include "mongo/util/mongoutils/str.h"
-#include <boost/smart_ptr/scoped_array.hpp>
 
 namespace mongo {
     struct TextUnitTest : public StartupTest {

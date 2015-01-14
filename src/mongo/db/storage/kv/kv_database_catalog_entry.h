@@ -33,9 +33,6 @@
 #include <map>
 #include <string>
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/mutex.hpp>
-
 #include "mongo/db/catalog/database_catalog_entry.h"
 
 namespace mongo {
@@ -50,6 +47,7 @@ namespace mongo {
 
         virtual bool exists() const;
         virtual bool isEmpty() const;
+        virtual bool hasUserData() const;
 
         virtual int64_t sizeOnDisk( OperationContext* opCtx ) const;
 
@@ -64,11 +62,9 @@ namespace mongo {
 
         virtual void getCollectionNamespaces( std::list<std::string>* out ) const;
 
-        virtual CollectionCatalogEntry* getCollectionCatalogEntry( OperationContext* txn,
-                                                                   const StringData& ns ) const;
+        virtual CollectionCatalogEntry* getCollectionCatalogEntry( const StringData& ns ) const;
 
-        virtual RecordStore* getRecordStore( OperationContext* txn,
-                                             const StringData& ns );
+        virtual RecordStore* getRecordStore( const StringData& ns ) const;
 
         virtual IndexAccessMethod* getIndex( OperationContext* txn,
                                              const CollectionCatalogEntry* collection,
@@ -96,10 +92,10 @@ namespace mongo {
         class AddCollectionChange;
         class RemoveCollectionChange;
 
-        KVStorageEngine* _engine; // not owned here
+        typedef std::map<std::string, KVCollectionCatalogEntry*> CollectionMap;
 
-        typedef std::map<std::string,KVCollectionCatalogEntry*> CollectionMap;
+
+        KVStorageEngine* const _engine; // not owned here
         CollectionMap _collections;
-        mutable boost::mutex _collectionsLock;
     };
 }

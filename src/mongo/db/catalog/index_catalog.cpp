@@ -56,7 +56,7 @@
 #include "mongo/db/keypattern.h"
 #include "mongo/db/ops/delete.h"
 #include "mongo/db/query/internal_plans.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
@@ -226,7 +226,7 @@ namespace mongo {
         auto_ptr<PlanExecutor> exec(
             InternalPlanner::collectionScan(txn,
                                             db->_indexesName,
-                                            db->getCollection(txn, db->_indexesName)));
+                                            db->getCollection(db->_indexesName)));
 
         BSONObj index;
         PlanExecutor::ExecState state;
@@ -702,7 +702,7 @@ namespace {
 
         // there may be pointers pointing at keys in the btree(s).  kill them.
         // TODO: can this can only clear cursors on this index?
-        _collection->cursorManager()->invalidateAll( false );
+        _collection->getCursorManager()->invalidateAll( false );
 
         // make sure nothing in progress
         massert( 17348,
@@ -802,7 +802,7 @@ namespace {
 
         // there may be pointers pointing at keys in the btree(s).  kill them.
         // TODO: can this can only clear cursors on this index?
-        _collection->cursorManager()->invalidateAll( false );
+        _collection->getCursorManager()->invalidateAll( false );
 
         // wipe out stats
         _collection->infoCache()->reset(txn);
@@ -1046,7 +1046,7 @@ namespace {
 
         // Notify other users of the IndexCatalog that we're about to invalidate 'oldDesc'.
         const bool collectionGoingAway = false;
-        _collection->cursorManager()->invalidateAll( collectionGoingAway );
+        _collection->getCursorManager()->invalidateAll( collectionGoingAway );
 
         // Delete the IndexCatalogEntry that owns this descriptor.  After deletion, 'oldDesc' is
         // invalid and should not be dereferenced.

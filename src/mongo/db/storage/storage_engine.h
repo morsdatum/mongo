@@ -34,14 +34,16 @@
 #include <vector>
 
 #include "mongo/base/status.h"
+#include "mongo/bson/bsonobj.h"
 
 namespace mongo {
 
-    class BSONObj;
     class DatabaseCatalogEntry;
     class OperationContext;
     class RecoveryUnit;
     struct StorageGlobalParams;
+    class StorageEngineLockFile;
+    class StorageEngineMetadata;
 
     /**
      * The StorageEngine class is the top level interface for creating a new storage
@@ -65,7 +67,8 @@ namespace mongo {
             /**
              * Return a new instance of the StorageEngine.  Caller owns the returned pointer.
              */
-            virtual StorageEngine* create(const StorageGlobalParams& params) const = 0;
+            virtual StorageEngine* create(const StorageGlobalParams& params,
+                                          const StorageEngineLockFile& lockFile) const = 0;
 
             /**
              * Returns the name of the storage engine.
@@ -86,6 +89,22 @@ namespace mongo {
              * Returns an error if the creation options are not valid.
              */
              virtual Status validateIndexStorageOptions(const BSONObj& options) const = 0;
+
+             /**
+              * Validates existing metadata in the data directory against startup options.
+              * Returns an error if the storage engine initialization should not proceed
+              * due to any inconsistencies between the current startup options and the creation
+              * options stored in the metadata.
+              */
+             virtual Status validateMetadata(const StorageEngineMetadata& metadata,
+                                             const StorageGlobalParams& params) const = 0;
+
+             /**
+              * Returns a new document suitable for storing in the data directory metadata.
+              * This document will be used by validateMetadata() to check startup options
+              * on restart.
+              */
+             virtual BSONObj createMetadataOptions(const StorageGlobalParams& params) const = 0;
         };
 
         /**

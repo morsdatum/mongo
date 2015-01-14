@@ -36,9 +36,10 @@
 #include <memory>
 
 #include "mongo/db/global_environment_experiment.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/util/concurrency/synchronization.h"
+#include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/time_support.h"

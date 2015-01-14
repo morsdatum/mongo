@@ -32,6 +32,7 @@
 
 #include "mongo/platform/basic.h"
 
+#include <boost/scoped_ptr.hpp>
 #include <boost/thread/thread.hpp>
 #include <fstream>
 
@@ -76,7 +77,7 @@
 #include "mongo/db/query/find.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/platform/atomic_word.h"
@@ -87,7 +88,6 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/gcov.h"
-#include "mongo/util/goodies.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/quick_exit.h"
@@ -95,20 +95,8 @@
 
 namespace mongo {
 
+    using boost::scoped_ptr;
     using logger::LogComponent;
-
-namespace {
-    inline LogComponent logComponentForOp(int op) {
-        switch (op) {
-        case dbInsert:
-        case dbUpdate:
-        case dbDelete:
-            return LogComponent::kWrite;
-        default:
-            return LogComponent::kQuery;
-        }
-    }
-}  // namespace
 
     // for diaglog
     inline void opread(Message& m) {
@@ -221,7 +209,7 @@ namespace {
                 audit::logQueryAuthzCheck(client, ns, q.query, status.code());
                 uassertStatusOK(status);
             }
-            dbresponse.exhaustNS = runQuery(txn, m, q, op, *resp, fromDBDirectClient);
+            dbresponse.exhaustNS = runQuery(txn, m, q, ns, op, *resp, fromDBDirectClient);
             verify( !resp->empty() );
         }
         catch ( SendStaleConfigException& e ){
@@ -236,10 +224,12 @@ namespace {
         if( ex ){
 
             op.debug().exceptionInfo = ex->getInfo();
-            log() << "assertion " << ex->toString() << " ns:" << q.ns << " query:" <<
+            log(LogComponent::kQuery) <<
+                "assertion " << ex->toString() << " ns:" << q.ns << " query:" <<
                 (q.query.valid() ? q.query.toString() : "query object is corrupt") << endl;
             if( q.ntoskip || q.ntoreturn )
-                log() << " ntoskip:" << q.ntoskip << " ntoreturn:" << q.ntoreturn << endl;
+                log(LogComponent::kQuery) <<
+                    " ntoskip:" << q.ntoskip << " ntoreturn:" << q.ntoreturn << endl;
 
             SendStaleConfigException* scex = NULL;
             if ( ex->getCode() == SendStaleConfigCode ) scex = static_cast<SendStaleConfigException*>( ex.get() );
@@ -254,7 +244,7 @@ namespace {
             BSONObj errObj = err.done();
 
             if( scex ){
-                log() << "stale version detected during query over "
+                log(LogComponent::kQuery) << "stale version detected during query over "
                       << q.ns << " : " << errObj << endl;
             }
 
@@ -388,7 +378,18 @@ namespace {
         debug.op = op;
 
         long long logThreshold = serverGlobalParams.slowMS;
-        bool shouldLog = logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(1));
+        LogComponent responseComponent(LogComponent::kQuery);
+        if (op == dbInsert ||
+            op == dbDelete ||
+            op == dbUpdate) {
+            responseComponent = LogComponent::kWrite;
+        }
+        else if (isCommand) {
+            responseComponent = LogComponent::kCommand;
+        }
+
+        bool shouldLog = logger::globalLogDomain()->shouldLog(responseComponent, 
+                                                              logger::LogSeverity::Debug(1));
 
         if ( op == dbQuery ) {
             receivedQuery(txn, c , dbresponse, m, fromDBDirectClient );
@@ -463,14 +464,14 @@ namespace {
              }
             catch (const UserException& ue) {
                 setLastError(ue.getCode(), ue.getInfo().msg.c_str());
-                MONGO_LOG_COMPONENT(3, logComponentForOp(op))
+                MONGO_LOG_COMPONENT(3, responseComponent)
                        << " Caught Assertion in " << opToString(op) << ", continuing "
                        << ue.toString() << endl;
                 debug.exceptionInfo = ue.getInfo();
             }
             catch (const AssertionException& e) {
                 setLastError(e.getCode(), e.getInfo().msg.c_str());
-                MONGO_LOG_COMPONENT(3, logComponentForOp(op))
+                MONGO_LOG_COMPONENT(3, responseComponent)
                        << " Caught Assertion in " << opToString(op) << ", continuing "
                        << e.toString() << endl;
                 debug.exceptionInfo = e.getInfo();
@@ -484,18 +485,18 @@ namespace {
         logThreshold += currentOp.getExpectedLatencyMs();
 
         if ( shouldLog || debug.executionTime > logThreshold ) {
-            MONGO_LOG_COMPONENT(0, logComponentForOp(op))
+            MONGO_LOG_COMPONENT(0, responseComponent)
                     << debug.report( currentOp ) << endl;
         }
 
         if ( currentOp.shouldDBProfile( debug.executionTime ) ) {
             // performance profiling is on
             if (txn->lockState()->isReadLocked()) {
-                MONGO_LOG_COMPONENT(1, logComponentForOp(op))
+                MONGO_LOG_COMPONENT(1, responseComponent)
                         << "note: not profiling because recursive read lock" << endl;
             }
             else if ( lockedForWriting() ) {
-                MONGO_LOG_COMPONENT(1, logComponentForOp(op))
+                MONGO_LOG_COMPONENT(1, responseComponent)
                         << "note: not profiling because doing fsync+lock" << endl;
             }
             else {
@@ -587,10 +588,10 @@ namespace {
                 Client::Context ctx(txn, ns);
 
                 //  The common case: no implicit collection creation
-                if (!upsert || ctx.db()->getCollection(txn, ns) != NULL) {
+                if (!upsert || ctx.db()->getCollection(ns) != NULL) {
                     PlanExecutor* rawExec;
                     uassertStatusOK(getExecutorUpdate(txn,
-                                                      ctx.db()->getCollection(txn, ns),
+                                                      ctx.db()->getCollection(ns),
                                                       &parsedUpdate,
                                                       &op.debug(),
                                                       &rawExec));
@@ -607,6 +608,7 @@ namespace {
                 break;
             }
             catch ( const WriteConflictException& dle ) {
+                op.debug().writeConflicts++;
                 if ( multi ) {
                     log(LogComponent::kWrite) << "Had WriteConflict during multi update, aborting";
                     throw;
@@ -625,7 +627,7 @@ namespace {
             Lock::DBLock dbLock(txn->lockState(), ns.db(), MODE_X);
             Client::Context ctx(txn, ns);
             Database* db = ctx.db();
-            if ( db->getCollection( txn, ns ) ) {
+            if ( db->getCollection( ns ) ) {
                 // someone else beat us to it, that's ok
                 // we might race while we unlock if someone drops
                 // but that's ok, we'll just do nothing and error out
@@ -640,7 +642,7 @@ namespace {
 
             PlanExecutor* rawExec;
             uassertStatusOK(getExecutorUpdate(txn,
-                                              ctx.db()->getCollection(txn, ns),
+                                              ctx.db()->getCollection(ns),
                                               &parsedUpdate,
                                               &op.debug(),
                                               &rawExec));
@@ -696,7 +698,7 @@ namespace {
 
                 PlanExecutor* rawExec;
                 uassertStatusOK(getExecutorDelete(txn,
-                                                  ctx.db()->getCollection(txn, ns),
+                                                  ctx.db()->getCollection(ns),
                                                   &parsedDelete,
                                                   &rawExec));
                 boost::scoped_ptr<PlanExecutor> exec(rawExec);
@@ -710,6 +712,7 @@ namespace {
                 break;
             }
             catch ( const WriteConflictException& dle ) {
+                op.debug().writeConflicts++;
                 WriteConflictException::logAndBackoff( attempt++, "delete", ns.toString() );
             }
         }
@@ -746,14 +749,8 @@ namespace {
                 const NamespaceString nsString( ns );
                 uassert( 16258, str::stream() << "Invalid ns [" << ns << "]", nsString.isValid() );
 
-                Status status = Status::OK();
-                if (CursorManager::getGlobalCursorManager()->ownsCursorId(cursorid)) {
-                    // TODO Implement auth check for global cursors.  SERVER-16657.
-                }
-                else {
-                    status = txn->getClient()->getAuthorizationSession()->checkAuthForGetMore(
-                            nsString, cursorid);
-                }
+                Status status = txn->getClient()->getAuthorizationSession()->checkAuthForGetMore(
+                    nsString, cursorid);
                 audit::logGetMoreAuthzCheck(txn->getClient(), nsString, cursorid, status.code());
                 uassertStatusOK(status);
 
@@ -863,7 +860,7 @@ namespace {
             js = fixed.getValue();
 
         WriteUnitOfWork wunit(txn);
-        Collection* collection = ctx.db()->getCollection( txn, ns );
+        Collection* collection = ctx.db()->getCollection( ns );
         if ( !collection ) {
             collection = ctx.db()->createCollection( txn, ns );
             verify( collection );
@@ -1025,7 +1022,7 @@ namespace {
             // Client::Context may implicitly create a database, so check existence
             if (dbHolder().get(txn, nsString.db()) != NULL) {
                 Client::Context ctx(txn, ns);
-                if (mode == MODE_X || ctx.db()->getCollection(txn, nsString)) {
+                if (mode == MODE_X || ctx.db()->getCollection(nsString)) {
                     if (multi.size() > 1) {
                         const bool keepGoing = d.reservedField() & InsertOption_ContinueOnError;
                         insertMulti(txn, ctx, keepGoing, ns, multi, op);
@@ -1067,6 +1064,10 @@ namespace {
         return shutdownInProgress.loadRelaxed() != 0;
     }
 
+    bool inShutdownStrict() {
+        return shutdownInProgress.load() != 0;
+    }
+
     static void shutdownServer() {
         log(LogComponent::kNetwork) << "shutdown: going to close listening sockets..." << endl;
         ListeningSockets::get()->closeAll();
@@ -1078,8 +1079,7 @@ namespace {
         log(LogComponent::kNetwork) << "shutdown: going to close sockets..." << endl;
         boost::thread close_socket_thread( stdx::bind(MessagingPort::closeAllSockets, 0) );
 
-        StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
-        storageEngine->cleanShutdown();
+        getGlobalEnvironment()->shutdownGlobalStorageEngineCleanly();
     }
 
     void exitCleanly(ExitCode code) {
@@ -1091,8 +1091,9 @@ namespace {
 
         // Global storage engine may not be started in all cases before we exit
         if (getGlobalEnvironment()->getGlobalStorageEngine() == NULL) {
-            dbexit(code); // never returns
-            invariant(false);
+            dbexit(code); // returns only under a windows service
+            invariant(code == EXIT_WINDOWS_SERVICE_STOP);
+            return;
         }
 
         getGlobalEnvironment()->setKillAllOperations();
@@ -1105,15 +1106,19 @@ namespace {
         // operation context, which also instantiates a recovery unit. Also, using the
         // lockGlobalBegin/lockGlobalComplete sequence, we avoid taking the flush lock. This will
         // all go away if we start acquiring the global/flush lock as part of ScopedTransaction.
-        DefaultLockerImpl globalLocker;
-        LockResult result = globalLocker.lockGlobalBegin(MODE_X);
+        //
+        // For a Windows service, dbexit does not call exit(), so we must leak the lock outside
+        // of this function to prevent any operations from running that need a lock.
+        //
+        DefaultLockerImpl* globalLocker = new DefaultLockerImpl();
+        LockResult result = globalLocker->lockGlobalBegin(MODE_X);
         if (result == LOCK_WAITING) {
-            result = globalLocker.lockGlobalComplete(UINT_MAX);
+            result = globalLocker->lockGlobalComplete(UINT_MAX);
         }
 
         invariant(LOCK_OK == result);
 
-        log() << "now exiting" << endl;
+        log(LogComponent::kControl) << "now exiting" << endl;
 
         // Execute the graceful shutdown tasks, such as flushing the outstanding journal 
         // and data files, close sockets, etc.
@@ -1141,7 +1146,7 @@ namespace {
 
         audit::logShutdown(currentClient.get());
 
-        log() << "dbexit: " << why << " rc: " << rc;
+        log(LogComponent::kControl) << "dbexit: " << why << " rc: " << rc;
 
 #ifdef _WIN32
         // Windows Service Controller wants to be told when we are down,

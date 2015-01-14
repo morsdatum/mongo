@@ -31,7 +31,10 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/restapi.h"
 
@@ -44,7 +47,7 @@
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/dbwebserver.h"
 #include "mongo/db/repl/master_slave.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/util/log.h"
 #include "mongo/util/md5.hpp"
 #include "mongo/util/mongoutils/html.h"

@@ -125,7 +125,7 @@ namespace mongo {
         const RecordStore* getRecordStore() const { return _recordStore; }
         RecordStore* getRecordStore() { return _recordStore; }
 
-        CursorManager* cursorManager() const { return &_cursorManager; }
+        CursorManager* getCursorManager() const { return &_cursorManager; }
 
         bool requiresIdIndex() const;
 
@@ -204,10 +204,12 @@ namespace mongo {
          * @return the post update location of the doc (may or may not be the same as oldLocation)
          */
         StatusWith<RecordId> updateDocument( OperationContext* txn,
-                                            const RecordId& oldLocation,
-                                            const BSONObj& newDoc,
-                                            bool enforceQuota,
-                                            OpDebug* debug );
+                                             const RecordId& oldLocation,
+                                             const BSONObj& oldDoc,
+                                             const BSONObj& newDoc,
+                                             bool enforceQuota,
+                                             bool indexesAffected,
+                                             OpDebug* debug );
 
         /**
          * right now not allowed to modify indexes

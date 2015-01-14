@@ -36,7 +36,7 @@
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/repl/oplog.h"
-#include "mongo/db/repl/repl_coordinator_global.h"
+#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
@@ -90,6 +90,18 @@ namespace mongo {
                 return PlanStage::FAILURE;
             }
             RecordId rloc = member->loc;
+
+            // If the working set member is in the owned obj with loc state, then the document may
+            // have already been deleted after-being force-fetched.
+            if (WorkingSetMember::LOC_AND_OWNED_OBJ == member->state) {
+                BSONObj deletedDoc;
+                if (!_collection->findDoc(_txn, rloc, &deletedDoc)) {
+                    // Doc is already deleted. Nothing more to do.
+                    ++_commonStats.needTime;
+                    return PlanStage::NEED_TIME;
+                }
+            }
+
             _ws->free(id);
 
             BSONObj deletedDoc;

@@ -26,6 +26,7 @@
  *    it in the license file.
  */
 
+#include <boost/scoped_ptr.hpp>
 #include <memory>
 
 #include "mongo/db/exec/collection_scan.h"
@@ -40,6 +41,8 @@
 #include "mongo/dbtests/dbtests.h"
 
 namespace QueryStageCount {
+
+    using boost::scoped_ptr;
 
     const int kDocuments = 100;
     const int kInterjections = kDocuments;
@@ -117,7 +120,8 @@ namespace QueryStageCount {
 
         void update(const RecordId& oldLoc, const BSONObj& newDoc) {
             WriteUnitOfWork wunit(&_txn);
-            _coll->updateDocument(&_txn, oldLoc, newDoc, false, NULL);
+            BSONObj oldDoc = _coll->getRecordStore()->dataFor( &_txn, oldLoc ).releaseToBson();
+            _coll->updateDocument(&_txn, oldLoc, oldDoc, newDoc, false, true, NULL);
             wunit.commit();
         }
 

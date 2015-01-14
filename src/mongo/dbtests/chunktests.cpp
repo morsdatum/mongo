@@ -28,7 +28,10 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_PCH_WHITELISTED
+#include "mongo/platform/basic.h"
 #include "mongo/pch.h"
+#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/json.h"
 #include "mongo/dbtests/dbtests.h"
@@ -57,8 +60,7 @@ namespace mongo {
                 Shard shard(name,
                             name,
                             0 /* maxSize */,
-                            false /* draining */,
-                            BSONArray() /* tags */);
+                            false /* draining */);
                 shards.insert( shard );
                 
                 ChunkPtr chunk( new Chunk( this, mySplitPoints[ i-1 ], mySplitPoints[ i ],

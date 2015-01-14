@@ -74,8 +74,8 @@ namespace mongo {
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
                                                      Database* db, 
                                                      const BSONObj& cmdObj) {
-            std::string toDeleteNs = db->name() + "." + cmdObj.firstElement().valuestrsafe();
-            Collection* collection = db->getCollection(opCtx, toDeleteNs);
+            const std::string toDeleteNs = parseNsCollectionRequired(db->name(), cmdObj);
+            Collection* collection = db->getCollection(toDeleteNs);
             IndexCatalog::IndexKillCriteria criteria;
 
             // Get index name to drop
@@ -122,26 +122,21 @@ namespace mongo {
                         BSONObj& jsobj,
                         string& errmsg,
                         BSONObjBuilder& anObjBuilder) {
-            const std::string coll = jsobj.firstElement().valuestrsafe();
-            if (coll.empty()) {
-                errmsg = "no collection name specified";
-                return false;
-            }
-
-            const std::string toDeleteNs = dbname + '.' + coll;
+            const std::string toDeleteNs = parseNsCollectionRequired(dbname, jsobj);
             if (!serverGlobalParams.quiet) {
                 LOG(0) << "CMD: dropIndexes " << toDeleteNs << endl;
             }
+            AutoGetDb autoDb(txn, dbname, MODE_IS);
+            Database* const db = autoDb.getDb();
+            Collection* collection = db ? db->getCollection(toDeleteNs) : NULL;
 
-            Client::Context ctx(txn, toDeleteNs);
-            Database* db = ctx.db();
-
-            Collection* collection = db->getCollection( txn, toDeleteNs );
-            if ( ! collection ) {
+            // If db/collection does not exist, short circuit and return.
+            if ( !db || !collection ) {
                 errmsg = "ns not found";
                 return false;
             }
 
+            Client::Context ctx(txn, toDeleteNs);
             stopIndexBuilds(txn, db, jsobj);
 
             IndexCatalog* indexCatalog = collection->getIndexCatalog();
@@ -232,17 +227,16 @@ namespace mongo {
         virtual std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
                                                      Database* db,
                                                      const BSONObj& cmdObj) {
-            std::string ns = db->name() + '.' + cmdObj["reIndex"].valuestrsafe();
+            const std::string ns = parseNsCollectionRequired(db->name(), cmdObj);
             IndexCatalog::IndexKillCriteria criteria;
             criteria.ns = ns;
-            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(opCtx, ns), criteria);
+            return IndexBuilder::killMatchingIndexBuilds(db->getCollection(ns), criteria);
         }
 
         bool run(OperationContext* txn, const string& dbname , BSONObj& jsobj, int, string& errmsg, BSONObjBuilder& result, bool /*fromRepl*/) {
             DBDirectClient db(txn);
 
-            BSONElement e = jsobj.firstElement();
-            string toDeleteNs = dbname + '.' + e.valuestr();
+            const std::string toDeleteNs = parseNsCollectionRequired(dbname, jsobj);
 
             LOG(0) << "CMD: reIndex " << toDeleteNs << endl;
 
@@ -250,7 +244,7 @@ namespace mongo {
             Lock::DBLock dbXLock(txn->lockState(), dbname, MODE_X);
             Client::Context ctx(txn, toDeleteNs);
 
-            Collection* collection = ctx.db()->getCollection( txn, toDeleteNs );
+            Collection* collection = ctx.db()->getCollection( toDeleteNs );
 
             if ( !collection ) {
                 errmsg = "ns not found";
@@ -313,7 +307,7 @@ namespace mongo {
             result.append( "nIndexes", (int)all.size() );
             result.append( "indexes", all );
 
-            IndexBuilder::restoreIndexes(indexesInProg);
+            IndexBuilder::restoreIndexes(txn, indexesInProg);
             return true;
         }
     } cmdReIndex;

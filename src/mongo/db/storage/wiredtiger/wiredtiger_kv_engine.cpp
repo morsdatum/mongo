@@ -105,6 +105,11 @@ namespace mongo {
           _durable( durable ),
           _sizeStorerSyncTracker( 100000, 60 * 1000 ) {
 
+        if (repair) {
+            // This should be done once before we try to access any data.
+            WiredTigerIndex::disableVersionCheckForRepair();
+        }
+
         _eventHandler.handle_error = mdb_handle_error;
         _eventHandler.handle_message = mdb_handle_message;
         _eventHandler.handle_progress = mdb_handle_progress;
@@ -141,20 +146,11 @@ namespace mongo {
         ss << "create,";
         ss << "cache_size=" << cacheSizeGB << "G,";
         ss << "session_max=20000,";
-        ss << "extensions=[local=(entry=index_collator_extension)],";
+        ss << "eviction=(threads_max=4),";
         ss << "statistics=(fast),";
         if ( _durable ) {
             ss << "log=(enabled=true,archive=true,path=journal,compressor=";
-
-            // TODO: remove this; SERVER-16568
-            std::string localJournalCompressor;
-            if (wiredTigerGlobalOptions.journalCompressor == "none") {
-                localJournalCompressor = "";
-            }
-            else {
-                localJournalCompressor = wiredTigerGlobalOptions.journalCompressor;
-            }
-            ss << localJournalCompressor << "),";
+            ss << wiredTigerGlobalOptions.journalCompressor << "),";
         }
         ss << "checkpoint=(wait=" << wiredTigerGlobalOptions.checkpointDelaySecs;
         ss << ",log_size=2GB),";
@@ -168,7 +164,11 @@ namespace mongo {
         if (ret == EINVAL) {
             fassertFailedNoTrace(28561);
         }
-        invariantWTOK(ret);
+        else if (ret != 0) {
+            Status s(wtRCToStatus(ret));
+            msgassertedNoTrace(28595, s.reason());
+        }
+
         _sessionCache.reset( new WiredTigerSessionCache( this ) );
 
         _sizeStorerUri = "table:sizeStorer";
@@ -364,8 +364,8 @@ namespace mongo {
                                                                      const StringData& ident,
                                                                      const IndexDescriptor* desc ) {
         if ( desc->unique() )
-            return new WiredTigerIndexUnique( _uri( ident ), desc );
-        return new WiredTigerIndexStandard( _uri( ident ), desc );
+            return new WiredTigerIndexUnique( opCtx, _uri( ident ), desc );
+        return new WiredTigerIndexStandard( opCtx, _uri( ident ), desc );
     }
 
     Status WiredTigerKVEngine::dropIdent( OperationContext* opCtx,
@@ -470,7 +470,7 @@ namespace mongo {
 
     std::vector<std::string> WiredTigerKVEngine::getAllIdents( OperationContext* opCtx ) const {
         std::vector<std::string> all;
-        WiredTigerCursor cursor( "metadata:", WiredTigerSession::kMetadataCursorId, opCtx );
+        WiredTigerCursor cursor( "metadata:", WiredTigerSession::kMetadataCursorId, false, opCtx );
         WT_CURSOR* c = cursor.get();
         if ( !c )
             return all;
