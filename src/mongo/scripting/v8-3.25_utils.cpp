@@ -51,7 +51,7 @@
 
 using namespace std;
 using boost::scoped_ptr;
-using boost::shared_ptr;
+//using boost::shared_ptr;
 
 namespace mongo {
 
