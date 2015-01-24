@@ -201,12 +201,14 @@ namespace mongo {
         while (cappedAndNeedDelete(txn)) {
             invariant(!_data->records.empty());
 
-            RecordId oldest = _data->records.begin()->first;
+            Records::iterator oldest = _data->records.begin();
+            RecordId id = oldest->first;
+            RecordData data = oldest->second.toRecordData();
 
             if (_cappedDeleteCallback)
-                uassertStatusOK(_cappedDeleteCallback->aboutToDeleteCapped(txn, oldest));
+                uassertStatusOK(_cappedDeleteCallback->aboutToDeleteCapped(txn, id, data));
 
-            deleteRecord(txn, oldest);
+            deleteRecord(txn, id);
         }
     }
 
@@ -295,7 +297,7 @@ namespace mongo {
                                                           const char* data,
                                                           int len,
                                                           bool enforceQuota,
-                                                          UpdateMoveNotifier* notifier ) {
+                                                          UpdateNotifier* notifier ) {
         InMemoryRecord* oldRecord = recordFor( loc );
         int oldLen = oldRecord->size;
 
@@ -303,6 +305,15 @@ namespace mongo {
             return StatusWith<RecordId>( ErrorCodes::InternalError,
                                         "failing update: objects in a capped ns cannot grow",
                                         10003 );
+        }
+
+        if (notifier) {
+            // The in-memory KV engine uses the invalidation framework (does not support
+            // doc-locking), and therefore must notify that it is updating a document.
+            Status callbackStatus = notifier->recordStoreGoingToUpdateInPlace(txn, loc);
+            if (!callbackStatus.isOK()) {
+                return StatusWith<RecordId>(callbackStatus);
+            }
         }
 
         InMemoryRecord newRecord(len);
@@ -394,17 +405,6 @@ namespace mongo {
             _data->dataSize -= it->second.size;
             _data->records.erase(it++);
         }
-    }
-
-    bool InMemoryRecordStore::compactSupported() const {
-        return false;
-    }
-    Status InMemoryRecordStore::compact(OperationContext* txn,
-                                        RecordStoreCompactAdaptor* adaptor,
-                                        const CompactOptions* options,
-                                        CompactStats* stats) {
-        // TODO might be possible to do something here
-        invariant(!"compact not yet implemented");
     }
 
     Status InMemoryRecordStore::validate(OperationContext* txn,

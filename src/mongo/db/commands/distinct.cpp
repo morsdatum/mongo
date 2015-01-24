@@ -46,6 +46,10 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::string;
+    using std::stringstream;
+
     class DistinctCommand : public Command {
     public:
         DistinctCommand() : Command("distinct") {}
@@ -163,7 +167,7 @@ namespace mongo {
                 b.appendNumber( "nscanned" , stats.totalKeysExamined );
                 b.appendNumber( "nscannedObjects" , stats.totalDocsExamined );
                 b.appendNumber( "timems" , t.millis() );
-                b.append( "planSummary" , stats.summaryStr );
+                b.append( "planSummary" , Explain::getPlanSummary(exec.get()) );
                 result.append( "stats" , b.obj() );
             }
 

@@ -64,8 +64,11 @@ using namespace mongoutils;
 
 namespace mongo {
 
-    class AlignedBuilder;
+    using std::endl;
+    using std::hex;
+    using std::string;
 
+    class AlignedBuilder;
 
     namespace dur {
         // Rotate after reaching this data size in a journal (j._<n>) file
@@ -728,6 +731,7 @@ namespace mongo {
             j.journal(h, uncompressed);
             stats.curr()->_writeToJournalMicros += t.micros();
         }
+
         void Journal::journal(const JSectHeader& h, const AlignedBuilder& uncompressed) {
             static AlignedBuilder b(32*1024*1024);
             /* buffer to journal will be

@@ -29,10 +29,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/stats/top.h"
 
@@ -45,6 +42,11 @@
 #include "mongo/db/commands.h"
 
 namespace mongo {
+
+    using std::endl;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     Top::UsageData::UsageData( const UsageData& older, const UsageData& newer ) {
         // this won't be 100% accurate on rollovers and drop(), but at least it won't be negative

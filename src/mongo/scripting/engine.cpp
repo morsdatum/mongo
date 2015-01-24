@@ -51,6 +51,10 @@ namespace mongo {
 
     using boost::scoped_ptr;
     using boost::shared_ptr;
+    using std::auto_ptr;
+    using std::endl;
+    using std::set;
+    using std::string;
 
     long long Scope::_lastVersion = 1;
 
@@ -129,7 +133,7 @@ namespace {
         boost::filesystem::path p(filename);
 #endif
         if (!exists(p)) {
-            log() << "file [" << filename << "] doesn't exist" << endl;
+            error() << "file [" << filename << "] doesn't exist" << endl;
             return false;
         }
 
@@ -148,7 +152,7 @@ namespace {
             }
 
             if (empty) {
-                log() << "directory [" << filename << "] doesn't have any *.js files" << endl;
+                error() << "directory [" << filename << "] doesn't have any *.js files" << endl;
                 return false;
             }
 
@@ -226,7 +230,7 @@ namespace {
                 _storedNames.insert(n.valuestr());
             }
             catch (const DBException& setElemEx) {
-                log() << "unable to load stored JavaScript function " << n.valuestr()
+                error() << "unable to load stored JavaScript function " << n.valuestr()
                       << "(): " << setElemEx.what() << endl;
             }
         }
@@ -356,7 +360,7 @@ namespace {
         static const unsigned kMaxPoolSize = 10;
         static const int kMaxScopeReuse = 10;
 
-        typedef deque<ScopeAndPool> Pools; // More-recently used Scopes are kept at the front.
+        typedef std::deque<ScopeAndPool> Pools; // More-recently used Scopes are kept at the front.
         Pools _pools;    // protected by _mutex
         mongo::mutex _mutex;
     };

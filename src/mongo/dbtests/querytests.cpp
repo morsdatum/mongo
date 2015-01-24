@@ -49,11 +49,17 @@
 #include "mongo/util/timer.h"
 
 namespace mongo {
-    void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip,
+    void assembleRequest( const std::string &ns, BSONObj query, int nToReturn, int nToSkip,
                          const BSONObj *fieldsToReturn, int queryOptions, Message &toSend );
 }
 
 namespace QueryTests {
+
+    using std::auto_ptr;
+    using std::cout;
+    using std::endl;
+    using std::string;
+    using std::vector;
 
     class Base {
     public:

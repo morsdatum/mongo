@@ -48,6 +48,13 @@
 namespace ShardingTests {
 
     using boost::shared_ptr;
+    using std::auto_ptr;
+    using std::make_pair;
+    using std::map;
+    using std::pair;
+    using std::set;
+    using std::string;
+    using std::vector;
 
     namespace serverandquerytests {
         class test1 {

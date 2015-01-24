@@ -134,6 +134,20 @@ namespace mongo {
         _lockState->unlockAll();
     }
 
+    Lock::GlobalLock::GlobalLock(Locker* lockState, LockMode lockMode)
+        : ScopedLock(lockState) {
+
+        LockResult result = _lockState->lockGlobalBegin(lockMode);
+        if (result == LOCK_WAITING) {
+            result = _lockState->lockGlobalComplete(UINT_MAX);
+        }
+
+        invariant(result == LOCK_OK);
+    }
+
+    Lock::GlobalLock::~GlobalLock() {
+        _lockState->unlockAll();
+    }
 
     Lock::DBLock::DBLock(Locker* lockState, const StringData& db, LockMode mode)
         : ScopedLock(lockState),
@@ -146,7 +160,15 @@ namespace mongo {
         const bool isRead = (_mode == MODE_S || _mode == MODE_IS);
 
         _lockState->lockGlobal(isRead ? MODE_IS : MODE_IX);
+
         if (supportsDocLocking() || enableCollectionLocking) {
+
+            // The check for the admin db is to ensure direct writes to auth collections
+            // are serialized (see SERVER-16092).
+            if (_id == resourceIdAdminDB && !isRead) {
+                _mode = MODE_X;
+            }
+
             _lockState->lock(_id, _mode);
         }
         else {

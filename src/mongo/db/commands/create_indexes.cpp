@@ -49,6 +49,8 @@
 
 namespace mongo {
 
+    using std::string;
+
     /**
      * { createIndexes : "bar", indexes : [ { ns : "test.bar", key : { x : 1 }, name: "x_1" } ] }
      */
@@ -155,7 +157,8 @@ namespace mongo {
                 wunit.commit();
             }
 
-            result.append("numIndexesBefore", collection->getIndexCatalog()->numIndexesTotal(txn));
+            const int numIndexesBefore = collection->getIndexCatalog()->numIndexesTotal(txn);
+            result.append("numIndexesBefore", numIndexesBefore);
 
             MultiIndexBlock indexer(txn, collection);
             indexer.allowBackgroundBuilding();
@@ -165,6 +168,7 @@ namespace mongo {
             indexer.removeExistingIndexes(&specs);
 
             if (specs.size() == 0) {
+                result.append("numIndexesAfter", numIndexesBefore);
                 result.append( "note", "all indexes already exist" );
                 return true;
             }

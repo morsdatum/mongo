@@ -62,6 +62,14 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::endl;
+    using std::ostringstream;
+    using std::set;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     class CmdMedianKey : public Command {
     public:
         CmdMedianKey() : Command( "medianKey" ) {}
@@ -630,7 +638,7 @@ namespace mongo {
                 return false;
             }
 
-            // From mongos >= v2.8.
+            // From mongos >= v3.0.
             BSONElement epochElem(cmdObj["epoch"]);
             if (epochElem.type() == jstOID) {
                 OID cmdEpoch = epochElem.OID();

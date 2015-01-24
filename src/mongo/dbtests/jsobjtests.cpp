@@ -31,10 +31,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <iostream>
 
@@ -50,6 +47,14 @@
 #include "mongo/util/stringutils.h"
 
 namespace mongo {
+
+    using std::cout;
+    using std::endl;
+    using std::numeric_limits;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     typedef std::map<std::string, BSONElement> BSONMap;
     BSONMap bson2map(const BSONObj& obj) {
         BSONMap m;

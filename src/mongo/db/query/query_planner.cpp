@@ -50,6 +50,9 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::numeric_limits;
+
     // Copied verbatim from db/index.h
     static bool isIdIndex( const BSONObj &pattern ) {
         BSONObjIterator i(pattern);
@@ -399,7 +402,7 @@ namespace mongo {
 
         // Use the cached index assignments to build solnRoot.  Takes ownership of clone.
         QuerySolutionNode* solnRoot =
-            QueryPlannerAccess::buildIndexedDataAccess(query, clone, false, params.indices);
+            QueryPlannerAccess::buildIndexedDataAccess(query, clone, false, params.indices, params);
 
         if (NULL != solnRoot) {
             // Takes ownership of 'solnRoot'.
@@ -686,6 +689,20 @@ namespace mongo {
         QueryPlannerIXSelect::rateIndices(query.root(), "", relevantIndices);
         QueryPlannerIXSelect::stripInvalidAssignments(query.root(), relevantIndices);
 
+        // Unless we have GEO_NEAR, TEXT, or a projection, we may be able to apply an optimization
+        // in which we strip unnecessary index assignments.
+        //
+        // Disallowed with projection because assignment to a non-unique index can allow the plan
+        // to be covered.
+        //
+        // TEXT and GEO_NEAR are special because they require the use of a text/geo index in order
+        // to be evaluated correctly. Stripping these "mandatory assignments" is therefore invalid.
+        if (query.getParsed().getProj().isEmpty()
+            && !QueryPlannerCommon::hasNode(query.root(), MatchExpression::GEO_NEAR)
+            && !QueryPlannerCommon::hasNode(query.root(), MatchExpression::TEXT)) {
+            QueryPlannerIXSelect::stripUnneededAssignments(query.root(), relevantIndices);
+        }
+
         // query.root() is now annotated with RelevantTag(s).
         QLOG() << "Rated tree:" << endl << query.root()->toString();
 
@@ -771,7 +788,8 @@ namespace mongo {
 
                 // This can fail if enumeration makes a mistake.
                 QuerySolutionNode* solnRoot =
-                    QueryPlannerAccess::buildIndexedDataAccess(query, rawTree, false, relevantIndices);
+                    QueryPlannerAccess::buildIndexedDataAccess(query, rawTree, false,
+                                                               relevantIndices, params);
 
                 if (NULL == solnRoot) { continue; }
 

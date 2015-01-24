@@ -45,8 +45,6 @@
 #include "mongo/db/repl/freshness_checker.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/is_master_response.h"
-#include "mongo/db/repl/master_slave.h"
-#include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
 #include "mongo/db/repl/repl_settings.h"
@@ -283,6 +281,7 @@ namespace {
         const PostMemberStateUpdateAction action =
             _setCurrentRSConfig_inlock(localConfig, myIndex.getValue());
         _setMyLastOptime_inlock(&lk, lastOpTime, false);
+        _externalState->setGlobalOpTime(lastOpTime);
         if (lk.owns_lock()) {
             lk.unlock();
         }
@@ -765,7 +764,7 @@ namespace {
         }
         else {
             // The command we received didn't contain a memberId, most likely this is because it
-            // came from a member running something prior to 2.8.
+            // came from a member running something prior to 3.0.
             // Fall back to finding the node by RID.
             slaveInfo = _findSlaveInfoByRID_inlock(args.rid);
             if (!slaveInfo) {
@@ -1334,9 +1333,9 @@ namespace {
                 entry.append("optime", itr->opTime);
                 entry.append("memberId", itr->memberId);
                 entry.append("cfgver", _rsConfig.getConfigVersion());
-                // SERVER-14550 Even though the "config" field isn't used on the other end in 2.8,
+                // SERVER-14550 Even though the "config" field isn't used on the other end in 3.0,
                 // we need to keep sending it for 2.6 compatibility.
-                // TODO(spencer): Remove this after 2.8 is released.
+                // TODO(spencer): Remove this after 3.0 is released.
                 const MemberConfig* member = _rsConfig.findMemberByID(itr->memberId);
                 fassert(18651, member); // We ensured the member existed in processHandshake.
                 entry.append("config", member->toBSON(_rsConfig.getTagConfig()));
@@ -1361,9 +1360,9 @@ namespace {
                 BSONObjBuilder subCmd (cmd.subobjStart("handshake"));
                 subCmd.append("handshake", itr->rid);
                 subCmd.append("member", itr->memberId);
-                // SERVER-14550 Even though the "config" field isn't used on the other end in 2.8,
+                // SERVER-14550 Even though the "config" field isn't used on the other end in 3.0,
                 // we need to keep sending it for 2.6 compatibility.
-                // TODO(spencer): Remove this after 2.8 is released.
+                // TODO(spencer): Remove this after 3.0 is released.
                 const MemberConfig* member = _rsConfig.findMemberByID(itr->memberId);
                 fassert(18650, member); // We ensured the member existed in processHandshake.
                 subCmd.append("config", member->toBSON(_rsConfig.getTagConfig()));
@@ -1400,6 +1399,12 @@ namespace {
                        this,
                        stdx::placeholders::_1,
                        response));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            response->markAsShutdownInProgress();
+            return;
+        }
+        fassert(28602, cbh.getStatus());
+
         _replExecutor.wait(cbh.getValue());
         if (isWaitingForApplierToDrain()) {
             // Report that we are secondary to ismaster callers until drain completes.
@@ -2314,6 +2319,7 @@ namespace {
         }
         boost::unique_lock<boost::mutex> lk(_mutex);
         _setMyLastOptime_inlock(&lk, lastOpTime, true);
+        _externalState->setGlobalOpTime(lastOpTime);
     }
 
     void ReplicationCoordinatorImpl::_shouldChangeSyncSource(

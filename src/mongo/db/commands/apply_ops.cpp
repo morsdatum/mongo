@@ -26,6 +26,10 @@
 *    it in the license file.
 */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kCommand
+
+#include "mongo/platform/basic.h"
+
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,13 +42,19 @@
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/dbhash.h"
+#include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/matcher/matcher.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/repl/oplog.h"
+#include "mongo/util/log.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::stringstream;
+
     class ApplyOpsCmd : public Command {
     public:
         virtual bool slaveOk() const { return false; }
@@ -82,10 +92,8 @@ namespace mongo {
 
             // SERVER-4328 todo : is global ok or does this take a long time? i believe multiple 
             // ns used so locking individually requires more analysis
-            ScopedTransaction transaction(txn, MODE_X);
+            ScopedTransaction scopedXact(txn, MODE_X);
             Lock::GlobalWrite globalWriteLock(txn->lockState());
-
-            DBDirectClient db(txn);
 
             // Preconditions check reads the database state, so needs to be done locked
             if ( cmdObj["preCondition"].type() == Array ) {
@@ -125,7 +133,7 @@ namespace mongo {
                 const char *opType = temp["op"].valuestrsafe();
                 if (*opType == 'n') continue;
 
-                string ns = temp["ns"].String();
+                const string ns = temp["ns"].String();
 
                 // Run operations under a nested lock as a hack to prevent yielding.
                 //
@@ -138,8 +146,7 @@ namespace mongo {
                 // We do not have a wrapping WriteUnitOfWork so it is possible for a journal
                 // commit to happen with a subset of ops applied.
                 // TODO figure out what to do about this.
-                ScopedTransaction transaction(txn, MODE_IX);
-                Lock::DBLock lk(txn->lockState(), nsToDatabaseSubstring(ns), MODE_X);
+                Lock::GlobalWrite globalWriteLockDisallowTempRelease(txn->lockState());
 
                 // Ensures that yielding will not happen (see the comment above).
                 DEV {
@@ -148,11 +155,26 @@ namespace mongo {
                 };
 
                 Client::Context ctx(txn, ns);
-                bool failed = repl::applyOperation_inlock(txn,
-                                                          ctx.db(),
-                                                          temp,
-                                                          false,
-                                                          alwaysUpsert);
+
+                bool failed;
+                while (true) {
+                    try {
+                        // We assume that in the WriteConflict retry case, either the op rolls back
+                        // any changes it makes or is otherwise safe to rerun.
+                        failed = repl::applyOperation_inlock(txn,
+                                                             ctx.db(),
+                                                             temp,
+                                                             false,
+                                                             alwaysUpsert);
+                        break;
+                    }
+                    catch (const WriteConflictException& wce) {
+                        LOG(2) << "WriteConflictException in applyOps command, retrying.";
+                        txn->recoveryUnit()->commitAndRestart();
+                        continue;
+                    }
+                }
+
                 ab.append(!failed);
                 if ( failed )
                     errors++;
@@ -183,13 +205,26 @@ namespace mongo {
                     }
                 }
 
+                const BSONObj cmdRewritten = cmdBuilder.done();
+
                 // We currently always logOp the command regardless of whether the individial ops
                 // succeeded and rely on any failures to also happen on secondaries. This isn't
                 // perfect, but it's what the command has always done and is part of its "correct"
                 // behavior.
-                WriteUnitOfWork wunit(txn);
-                repl::logOp(txn, "c", tempNS.c_str(), cmdBuilder.done());
-                wunit.commit();
+                while (true) {
+                    try {
+                        WriteUnitOfWork wunit(txn);
+                        repl::logOp(txn, "c", tempNS.c_str(), cmdRewritten);
+                        wunit.commit();
+                        break;
+                    }
+                    catch (const WriteConflictException& wce) {
+                        LOG(2) <<
+                            "WriteConflictException while logging applyOps command, retrying.";
+                        txn->recoveryUnit()->commitAndRestart();
+                        continue;
+                    }
+                }
             }
 
             if (errors != 0) {

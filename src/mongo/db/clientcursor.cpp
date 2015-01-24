@@ -52,6 +52,9 @@
 
 namespace mongo {
 
+    using std::string;
+    using std::stringstream;
+
     static Counter64 cursorStatsOpen; // gauge
     static Counter64 cursorStatsOpenPinned; // gauge
     static Counter64 cursorStatsOpenNoTimeout; // gauge
@@ -226,7 +229,7 @@ namespace mongo {
 
     ClientCursorPin::~ClientCursorPin() {
         cursorStatsOpenPinned.decrement();
-        DESTRUCTOR_GUARD( release(); );
+        release();
     }
 
     void ClientCursorPin::release() {
@@ -244,9 +247,12 @@ namespace mongo {
             // Unpin the cursor under the collection cursor manager lock.
             _cursor->cursorManager()->unpin( _cursor );
         }
+
+        _cursor = NULL;
     }
 
     void ClientCursorPin::deleteUnderlying() {
+        invariant( _cursor );
         invariant( _cursor->isPinned() );
         // Note the following subtleties of this method's implementation:
         // - We must unpin the cursor before destruction, since it is an error to destroy a pinned
@@ -314,7 +320,7 @@ namespace mongo {
 
     // QUESTION: Restrict to the namespace from which this command was issued?
     // Alternatively, make this command admin-only?
-    // TODO: remove this for 2.8
+    // TODO: remove this for 3.0
     class CmdCursorInfo : public Command {
     public:
         CmdCursorInfo() : Command( "cursorInfo", true ) {}

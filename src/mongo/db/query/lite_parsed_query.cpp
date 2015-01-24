@@ -36,6 +36,9 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::string;
+
     const string LiteParsedQuery::cmdOptionMaxTimeMS("maxTimeMS");
     const string LiteParsedQuery::queryOptionMaxTimeMS("$maxTimeMS");
 
@@ -116,7 +119,7 @@ namespace mongo {
                     hintObj = cmdObj["hint"].Obj().getOwned();
                 }
                 else if (String == el.type()) {
-                    hintObj = el.wrap();
+                    hintObj = el.wrap("$hint");
                 }
                 else {
                     return Status(ErrorCodes::BadValue,
@@ -774,10 +777,12 @@ namespace mongo {
                     if (e.isABSONObj()) {
                         _hint = e.embeddedObject().getOwned();
                     }
-                    else {
-                        // Hint can be specified as an object or as a string.  Wrap takes care of
-                        // it.
+                    else if (String == e.type()) {
                         _hint = e.wrap();
+                    }
+                    else {
+                        return Status(ErrorCodes::BadValue,
+                                      "$hint must be either a string or nested object");
                     }
                 }
                 else if (str::equals("returnKey", name)) {

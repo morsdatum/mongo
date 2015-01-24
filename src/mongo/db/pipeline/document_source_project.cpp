@@ -26,10 +26,7 @@
  * it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <boost/smart_ptr.hpp>
 
@@ -42,6 +39,8 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
+    using std::string;
+    using std::vector;
 
     const char DocumentSourceProject::projectName[] = "$project";
 

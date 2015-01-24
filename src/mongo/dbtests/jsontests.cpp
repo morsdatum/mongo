@@ -31,10 +31,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <limits>
 
@@ -45,6 +42,14 @@
 
 
 namespace JsonTests {
+
+    using std::cout;
+    using std::endl;
+    using std::numeric_limits;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     namespace JsonStringTests {
 
         class Empty {

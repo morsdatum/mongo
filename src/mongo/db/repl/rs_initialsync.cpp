@@ -55,6 +55,9 @@ namespace mongo {
 namespace repl {
 namespace {
 
+    using std::list;
+    using std::string;
+
     /**
      * Truncates the oplog (removes any documents) and resets internal variables that were
      * originally initialized or affected by using values from the oplog at startup time.  These 
@@ -299,7 +302,9 @@ namespace {
             // prime oplog
             try {
                 _tryToApplyOpWithRetry(&txn, &init, lastOp);
-                _logOpObjRS(&txn, lastOp);
+                std::deque<BSONObj> ops;
+                ops.push_back(lastOp);
+                writeOpsToOplog(&txn, ops);
                 return Status::OK();
             } catch (DBException& e) {
                 // Return if in shutdown
@@ -329,7 +334,9 @@ namespace {
 
         // prime oplog
         _tryToApplyOpWithRetry(&txn, &init, lastOp);
-        _logOpObjRS(&txn, lastOp);
+        std::deque<BSONObj> ops;
+        ops.push_back(lastOp);
+        writeOpsToOplog(&txn, ops);
 
         std::string msg = "oplog sync 1 of 3";
         log() << msg;

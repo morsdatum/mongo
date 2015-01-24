@@ -43,6 +43,8 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::endl;
     using std::vector;
 
     // static
@@ -227,7 +229,8 @@ namespace mongo {
         params.options = QueryPlannerParams::NO_TABLE_SCAN;
 
         // We're creating a "virtual index" with key pattern equal to the sort order.
-        IndexEntry sortOrder(sortObj, IndexNames::BTREE, true, false, "doesnt_matter", BSONObj());
+        IndexEntry sortOrder(sortObj, IndexNames::BTREE, true, false, false, "doesnt_matter",
+                             BSONObj());
         params.indices.push_back(sortOrder);
 
         CanonicalQuery* rawQueryForSort;

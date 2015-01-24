@@ -50,6 +50,7 @@
 #include "mongo/db/server_options.h"
 #include "mongo/util/background.h"
 #include "mongo/util/concurrency/value.h"
+#include "mongo/util/debug_util.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/mongoutils/str.h"
@@ -61,25 +62,38 @@
 
 namespace mongo {
 
+    using std::endl;
+    using std::pair;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     MONGO_FP_DECLARE(throwSockExcep);
 
     static bool ipv6 = false;
     void enableIPv6(bool state) { ipv6 = state; }
     bool IPv6Enabled() { return ipv6; }
-    
+
     void setSockTimeouts(int sock, double secs) {
+        bool report = shouldLog(logger::LogSeverity::Debug(4));
+        DEV report = true;
+#if defined(_WIN32)
+        DWORD timeout = secs * 1000; // Windows timeout is a DWORD, in milliseconds.
+        int status =
+            setsockopt( sock, SOL_SOCKET, SO_RCVTIMEO,
+                    reinterpret_cast<char*>(&timeout), sizeof(DWORD) );
+        if (report && (status == SOCKET_ERROR))
+            log() << "unable to set SO_RCVTIMEO: "
+               << errnoWithDescription(WSAGetLastError()) << endl;
+        status = setsockopt( sock, SOL_SOCKET, SO_SNDTIMEO,
+                    reinterpret_cast<char*>(&timeout), sizeof(DWORD) );
+        DEV if (report && (status == SOCKET_ERROR))
+            log() << "unable to set SO_SNDTIMEO: "
+               << errnoWithDescription(WSAGetLastError()) << endl;
+#else
         struct timeval tv;
         tv.tv_sec = (int)secs;
         tv.tv_usec = (int)((long long)(secs*1000*1000) % (1000*1000));
-        bool report = logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(4));
-        DEV report = true;
-#if defined(_WIN32)
-        tv.tv_sec *= 1000; // Windows timeout is a DWORD, in milliseconds.
-        int status = setsockopt( sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &tv.tv_sec, sizeof(DWORD) ) == 0;
-        if( report && (status == SOCKET_ERROR) ) log() << "unable to set SO_RCVTIMEO" << endl;
-        status = setsockopt( sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &tv.tv_sec, sizeof(DWORD) ) == 0;
-        DEV if( report && (status == SOCKET_ERROR) ) log() << "unable to set SO_SNDTIMEO" << endl;
-#else
         bool ok = setsockopt( sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &tv, sizeof(tv) ) == 0;
         if( report && !ok ) log() << "unable to set SO_RCVTIMEO" << endl;
         ok = setsockopt( sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &tv, sizeof(tv) ) == 0;

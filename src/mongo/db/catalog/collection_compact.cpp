@@ -47,6 +47,9 @@
 
 namespace mongo {
 
+    using std::endl;
+    using std::vector;
+
     namespace {
         BSONObj _compactAdjustIndexSpec( const BSONObj& oldSpec ) {
             BSONObjBuilder b;
@@ -100,11 +103,24 @@ namespace mongo {
 
     StatusWith<CompactStats> Collection::compact( OperationContext* txn,
                                                   const CompactOptions* compactOptions ) {
+        dassert(txn->lockState()->isCollectionLockedForMode(ns().toString(), MODE_X));
+
         if ( !_recordStore->compactSupported() )
-            return StatusWith<CompactStats>( ErrorCodes::BadValue,
+            return StatusWith<CompactStats>( ErrorCodes::CommandNotSupported,
                                              str::stream() <<
                                              "cannot compact collection with record store: " <<
                                              _recordStore->name() );
+
+        if (_recordStore->compactsInPlace()) {
+            // Since we are compacting in-place, we don't need to touch the indexes.
+            // TODO SERVER-16856 compact indexes
+            CompactStats stats;
+            Status status = _recordStore->compact(txn, NULL, compactOptions, &stats);
+            if (!status.isOK())
+                return StatusWith<CompactStats>(status);
+
+            return StatusWith<CompactStats>(stats);
+        }
 
         if ( _indexCatalog.numIndexesInProgress( txn ) )
             return StatusWith<CompactStats>( ErrorCodes::BadValue,
@@ -161,7 +177,9 @@ namespace mongo {
 
         MyCompactAdaptor adaptor(this, &indexer);
 
-        _recordStore->compact( txn, &adaptor, compactOptions, &stats );
+        status = _recordStore->compact( txn, &adaptor, compactOptions, &stats);
+        if (!status.isOK())
+            return StatusWith<CompactStats>(status);
 
         log() << "starting index commits";
         status = indexer.doneInserting();

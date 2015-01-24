@@ -29,10 +29,7 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <iostream>
 
@@ -45,6 +42,9 @@
 #include "mongo/util/timer.h"
 
 namespace DirectClientTests {
+
+    using std::auto_ptr;
+    using std::vector;
 
     class ClientBase {
     public:

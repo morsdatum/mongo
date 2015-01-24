@@ -26,16 +26,18 @@
  * it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/field_path.h"
 
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using std::ostream;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     using namespace mongoutils;
 

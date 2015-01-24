@@ -28,10 +28,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kCommand
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/repl/replset_commands.h"
 
@@ -59,6 +56,10 @@
 
 namespace mongo {
 namespace repl {
+
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     unsigned replSetForceInitialSyncFailure = 0;
 
@@ -122,13 +123,6 @@ namespace repl {
             return appendCommandStatus(result, status);
         }
     } cmdReplSetRBID;
-
-    /** helper to get rollback id from another server. */
-    int getRBID(DBClientConnection *c) {
-        bo info;
-        c->simpleCommand("admin", &info, "replSetGetRBID");
-        return info["rbid"].numberInt();
-    }
 
     class CmdReplSetGetStatus : public ReplSetCommand {
     public:

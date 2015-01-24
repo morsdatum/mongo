@@ -28,15 +28,15 @@
 #include <sstream>
 #include <boost/static_assert.hpp>
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
 #undef MONGO_PCH_WHITELISTED // for malloc/realloc/INFINITY pulled from bson
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/util/safe_num.h"
 
 namespace mongo {
+
+    using std::ostringstream;
 
     SafeNum::SafeNum(const BSONElement& element) {
         switch (element.type()) {

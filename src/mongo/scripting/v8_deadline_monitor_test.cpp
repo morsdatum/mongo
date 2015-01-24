@@ -28,10 +28,7 @@
 
 // DeadlineMonitor unit tests
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/scripting/v8_deadline_monitor.h"
 
@@ -42,6 +39,7 @@
 namespace mongo {
 
     using boost::shared_ptr;
+    using std::vector;
 
     class TaskGroup {
     public:

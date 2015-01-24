@@ -28,10 +28,7 @@
 *    it in the license file.
 */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/fts/fts_query.h"
 #include "mongo/db/fts/fts_spec.h"
@@ -44,6 +41,11 @@ namespace mongo {
     namespace fts {
 
         using namespace mongoutils;
+
+        using std::set;
+        using std::string;
+        using std::stringstream;
+        using std::vector;
 
         Status FTSQuery::parse(const string& query, const StringData& language,
                                TextIndexVersion textIndexVersion) {

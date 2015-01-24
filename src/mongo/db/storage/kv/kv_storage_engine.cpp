@@ -35,9 +35,14 @@
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/storage/kv/kv_database_catalog_entry.h"
 #include "mongo/db/storage/kv/kv_engine.h"
+#include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
+#include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::vector;
 
     namespace {
         const std::string catalogInfo = "_mdb_catalog";
@@ -70,6 +75,9 @@ namespace mongo {
         : _options( options )
         , _engine( engine )
         , _supportsDocLocking(_engine->supportsDocLocking()) {
+
+        uassert(28601, "Storage engine does not support --directoryperdb",
+                !(options.directoryPerDB && !engine->supportsDirectoryPerDB()));
 
         OperationContextNoop opCtx( _engine->newRecoveryUnit() );
 
@@ -116,7 +124,8 @@ namespace mongo {
                 if ( !db ) {
                     db = new KVDatabaseCatalogEntry( dbName, this );
                 }
-                db->initCollection( &opCtx, coll );
+
+                db->initCollection( &opCtx, coll, options.forRepair );
             }
 
             uow.commit();
@@ -259,6 +268,11 @@ namespace mongo {
     }
 
     Status KVStorageEngine::repairRecordStore(OperationContext* txn, const std::string& ns) {
-        return _engine->repairIdent(txn, _catalog->getCollectionIdent(ns));
+        Status status = _engine->repairIdent(txn, _catalog->getCollectionIdent(ns));
+        if (!status.isOK())
+            return status;
+
+        _dbs[nsToDatabase(ns)]->reinitCollectionAfterRepair(txn, ns);
+        return Status::OK();
     }
 }

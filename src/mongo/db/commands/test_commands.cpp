@@ -45,6 +45,10 @@
 
 namespace mongo {
 
+    using std::endl;
+    using std::string;
+    using std::stringstream;
+
     /* For testing only, not for general use. Enabled via command-line */
     class GodInsert : public Command {
     public:
@@ -200,6 +204,7 @@ namespace mongo {
         virtual bool run(OperationContext* txn, const string& dbname , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool fromRepl) {
             const std::string ns = parseNsCollectionRequired(dbname, cmdObj);
 
+            ScopedTransaction scopedXact(txn, MODE_IX);
             AutoGetDb autoDb(txn, dbname, MODE_X);
 
             Database* db = autoDb.getDb();

@@ -77,7 +77,7 @@ namespace mongo {
                                                   const char* data,
                                                   int len,
                                                   bool enforceQuota,
-                                                  UpdateMoveNotifier* notifier );
+                                                  UpdateNotifier* notifier );
 
         virtual bool updateWithDamagesSupported() const;
 
@@ -98,12 +98,6 @@ namespace mongo {
         virtual Status truncate( OperationContext* txn );
 
         virtual void temp_cappedTruncateAfter( OperationContext* txn, RecordId end, bool inclusive );
-
-        virtual bool compactSupported() const;
-        virtual Status compact( OperationContext* txn,
-                                RecordStoreCompactAdaptor* adaptor,
-                                const CompactOptions* options,
-                                CompactStats* stats );
 
         virtual Status validate( OperationContext* txn,
                                  bool full,
@@ -135,6 +129,13 @@ namespace mongo {
 
         virtual boost::optional<RecordId> oplogStartHack(OperationContext* txn,
                                                          const RecordId& startingPosition) const;
+
+        virtual void updateStatsAfterRepair(OperationContext* txn,
+                                            long long numRecords,
+                                            long long dataSize) {
+            invariant(_data->records.size() == size_t(numRecords));
+            _data->dataSize = dataSize;
+        }
 
     protected:
         struct InMemoryRecord {

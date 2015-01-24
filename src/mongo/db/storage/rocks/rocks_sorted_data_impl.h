@@ -1,5 +1,3 @@
-// rocks_sorted_data_impl.h
-
 /**
  *    Copyright (C) 2014 MongoDB Inc.
  *
@@ -37,7 +35,7 @@
 #include <rocksdb/db.h>
 
 #include "mongo/bson/ordering.h"
-#include "mongo/db/storage/index_entry_comparison.h"
+#include "mongo/db/storage/key_string.h"
 
 #pragma once
 
@@ -91,8 +89,6 @@ namespace mongo {
 
         virtual bool isEmpty(OperationContext* txn);
 
-        virtual Status touch(OperationContext* txn) const;
-
         virtual long long numEntries(OperationContext* txn) const;
 
         virtual Cursor* newCursor(OperationContext* txn, int direction) const;
@@ -101,14 +97,8 @@ namespace mongo {
 
         virtual long long getSpaceUsedBytes( OperationContext* txn ) const;
 
-        //rocks specific
-
-        // ownership passes to caller. Bare because we need to pass the bare pointer to the
-        // rocksdb::Options class
-        static rocksdb::Comparator* newRocksComparator( const Ordering& order );
-
     private:
-        std::string _getTransactionID(const BSONObj& key) const;
+        std::string _getTransactionID(const KeyString& key) const;
 
         rocksdb::DB* _db; // not owned
 

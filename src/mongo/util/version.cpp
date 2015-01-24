@@ -37,6 +37,9 @@
 
 namespace mongo {
 
+    using std::string;
+    using std::stringstream;
+
     /* Approved formats for versionString:
      *      1.2.3
      *      1.2.3-pre-
@@ -44,7 +47,7 @@ namespace mongo {
      *      1.2.3-rc4-pre-
      * If you really need to do something else you'll need to fix _versionArray()
      */
-    const char versionString[] = "2.8.0-rc5";
+    const char versionString[] = "3.0.0-rc6";
 
     // See unit test for example outputs
     BSONArray toVersionArray(const char* version){

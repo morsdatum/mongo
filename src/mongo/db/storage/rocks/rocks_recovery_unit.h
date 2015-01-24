@@ -1,5 +1,3 @@
-// rocks_recovery_unit.h
-
 /**
 *    Copyright (C) 2014 MongoDB Inc.
 *
@@ -79,6 +77,8 @@ namespace mongo {
         virtual void* writingPtr(void* data, size_t len) { invariant(!"don't call writingPtr"); }
 
         virtual void registerChange(Change* change);
+
+        virtual void setRollbackWritesDisabled() {}
 
         // local api
 

@@ -28,10 +28,7 @@
 *    it in the license file.
 */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/fts/fts_matcher.h"
 #include "mongo/db/fts/fts_element_iterator.h"
@@ -40,6 +37,8 @@
 namespace mongo {
 
     namespace fts {
+
+        using std::string;
 
         FTSMatcher::FTSMatcher( const FTSQuery& query, const FTSSpec& spec )
             : _query( query ),

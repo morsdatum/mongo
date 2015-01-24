@@ -29,10 +29,7 @@
 
 #pragma once
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 namespace mongo {
 
@@ -41,7 +38,7 @@ void bsonArrToNumVector(BSONElement el, std::vector<T>& results){
 
     if(el.type() == Array){
 
-	vector<BSONElement> elements = el.Array();
+        std::vector<BSONElement> elements = el.Array();
 
         for(std::vector<BSONElement>::iterator i = elements.begin(); i != elements.end(); ++i){
             results.push_back( (T) (*i).Number() );

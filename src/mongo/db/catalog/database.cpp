@@ -46,6 +46,7 @@
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/database_catalog_entry.h"
 #include "mongo/db/catalog/database_holder.h"
+#include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/global_environment_d.h"
@@ -61,6 +62,14 @@
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using std::auto_ptr;
+    using std::endl;
+    using std::list;
+    using std::set;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     void massertNamespaceNotIndex( const StringData& ns, const StringData& caller ) {
         massert( 17320,
@@ -177,7 +186,7 @@ namespace mongo {
         invariant( rs.get() ); // if cce exists, so should this
 
         // Not registering AddCollectionChange since this is for collections that already exist.
-        Collection* c = new Collection( txn, fullns, cce.release(), rs.release(), this );
+        Collection* c = new Collection( txn, fullns, cce.release(), rs.release(), _dbEntry );
         return c;
     }
 
@@ -254,42 +263,51 @@ namespace mongo {
             CollectionOptions options = coll->getCollectionOptions( txn );
             if ( !options.temp )
                 continue;
+            try {
+                WriteUnitOfWork wunit(txn);
+                Status status = dropCollection( txn, ns );
+                if ( !status.isOK() ) {
+                    warning() << "could not drop temp collection '" << ns << "': " << status;
+                    continue;
+                }
 
-            WriteUnitOfWork wunit(txn);
-            Status status = dropCollection( txn, ns );
-            if ( !status.isOK() ) {
-                warning() << "could not drop temp collection '" << ns << "': " << status;
-                continue;
+                string cmdNs = _name + ".$cmd";
+                repl::logOp( txn,
+                             "c",
+                             cmdNs.c_str(),
+                             BSON( "drop" << nsToCollectionSubstring( ns ) ) );
+                wunit.commit();
             }
-
-            string cmdNs = _name + ".$cmd";
-            repl::logOp( txn,
-                         "c",
-                         cmdNs.c_str(),
-                         BSON( "drop" << nsToCollectionSubstring( ns ) ) );
-            wunit.commit();
+            catch (const WriteConflictException& exp) {
+                warning() << "could not drop temp collection '" << ns << "' due to "
+                    "WriteConflictException";
+                txn->recoveryUnit()->commitAndRestart();
+            }
         }
     }
 
-    bool Database::setProfilingLevel( OperationContext* txn, int newLevel , string& errmsg ) {
-        if ( _profile == newLevel )
-            return true;
-
-        if ( newLevel < 0 || newLevel > 2 ) {
-            errmsg = "profiling level has to be >=0 and <= 2";
-            return false;
+    Status Database::setProfilingLevel(OperationContext* txn, int newLevel) {
+        if (_profile == newLevel) {
+            return Status::OK();
         }
 
-        if ( newLevel == 0 ) {
+        if (newLevel == 0) {
             _profile = 0;
-            return true;
+            return Status::OK();
         }
 
-        if (!getOrCreateProfileCollection(txn, this, true, &errmsg))
-            return false;
+        if (newLevel < 0 || newLevel > 2) {
+            return Status(ErrorCodes::BadValue, "profiling level has to be >=0 and <= 2");
+        }
+
+        Status status = createProfileCollection(txn, this);
+        if (!status.isOK()) {
+            return status;
+        }
 
         _profile = newLevel;
-        return true;
+
+        return Status::OK();
     }
 
     void Database::getStats( OperationContext* opCtx, BSONObjBuilder* output, double scale ) {

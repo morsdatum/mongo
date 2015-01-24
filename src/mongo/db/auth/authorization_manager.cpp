@@ -65,6 +65,10 @@
 
 namespace mongo {
 
+    using std::endl;
+    using std::string;
+    using std::vector;
+
     AuthInfo internalSecurity;
 
     MONGO_INITIALIZER_WITH_PREREQUISITES(SetupInternalSecurityUser, MONGO_NO_PREREQUISITES)(
@@ -617,7 +621,7 @@ namespace mongo {
         user->incrementRefCount();
         // NOTE: It is not safe to throw an exception from here to the end of the method.
         if (guard.isSameCacheGeneration()) {
-            _userCache.insert(make_pair(userName, user.get()));
+            _userCache.insert(std::make_pair(userName, user.get()));
             if (_version == schemaVersionInvalid)
                 _version = authzVersion;
         }
@@ -756,7 +760,7 @@ namespace {
         BSONElement credentialsElement = userDoc["credentials"];
         uassert(18806,
                 mongoutils::str::stream() << "While preparing to upgrade user doc from "
-                        "2.6/2.8 user data schema to the 2.8 SCRAM only schema, found a user doc "
+                        "2.6/3.0 user data schema to the 3.0 SCRAM only schema, found a user doc "
                         "with missing or incorrectly formatted credentials: "
                         << userDoc.toString(),
                         credentialsElement.type() == Object);
@@ -773,7 +777,7 @@ namespace {
 
         uassert(18744,
                 mongoutils::str::stream() << "While preparing to upgrade user doc from "
-                        "2.6/2.8 user data schema to the 2.8 SCRAM only schema, found a user doc "
+                        "2.6/3.0 user data schema to the 3.0 SCRAM only schema, found a user doc "
                         "missing MONGODB-CR credentials :"
                         << userDoc.toString(),
                 !mongoCRElement.eoo());

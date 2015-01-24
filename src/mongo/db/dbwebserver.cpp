@@ -31,10 +31,7 @@
 *    it in the license file.
 */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/dbwebserver.h"
 
@@ -64,6 +61,10 @@
 
 
 namespace mongo {
+
+    using std::map;
+    using std::stringstream;
+    using std::vector;
 
     using namespace html;
 

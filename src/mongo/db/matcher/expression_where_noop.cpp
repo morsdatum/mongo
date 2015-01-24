@@ -28,15 +28,15 @@
  *    it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 #include "mongo/base/init.h"
 #include "mongo/db/matcher/expression.h"
 #include "mongo/db/matcher/expression_parser.h"
 
 namespace mongo {
+
+    using std::auto_ptr;
+    using std::string;
 
     /**
      * Bogus no-op $where match expression to parse $where in mongos,
@@ -116,6 +116,7 @@ namespace mongo {
     }
 
     StatusWithMatchExpression WhereCallbackNoop::parseWhere(const BSONElement& where) const {
+
 
         auto_ptr<WhereNoOpMatchExpression> exp( new WhereNoOpMatchExpression() );
         if ( where.type() == String || where.type() == Code ) {

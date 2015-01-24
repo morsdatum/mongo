@@ -42,13 +42,16 @@ using namespace mongo;
 
 namespace {
 
+    using std::string;
+    using std::vector;
+
     // Provides data to be inserted. Must be large enough for largest possible record.
     // Should be in BSS so unused portions should be free.
     char zeros[20*1024*1024] = {};
 
     class DummyCappedDocumentDeleteCallback : public CappedDocumentDeleteCallback {
     public:
-        Status aboutToDeleteCapped( OperationContext* txn, const RecordId& loc ) {
+        Status aboutToDeleteCapped( OperationContext* txn, const RecordId& loc, RecordData data) {
             deleted.push_back( DiskLoc::fromRecordId(loc) );
             return Status::OK();
         }

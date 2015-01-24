@@ -34,10 +34,7 @@
 */
 
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <string>
 #include <vector>
@@ -52,6 +49,8 @@
 #include "mongo/util/background.h"
 
 namespace mongo {
+
+    using std::string;
 
     class BasicDriverHelper : public Command {
     public:

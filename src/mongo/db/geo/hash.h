@@ -28,10 +28,7 @@
 
 #pragma once
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 #include "mongo/db/jsobj.h"
 
 namespace mongo {
@@ -137,7 +134,7 @@ namespace mongo {
         //
         // Requires: level < this->_bits, so that we can determine which vertex is
         // closest (in particular, level == kMaxBits is not allowed).
-        void appendVertexNeighbors(unsigned level, vector<GeoHash>* output) const;
+        void appendVertexNeighbors(unsigned level, std::vector<GeoHash>* output) const;
 
     private:
 

@@ -29,10 +29,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kControl
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/storage/mmap_v1/durable_mapped_file.h"
@@ -44,6 +41,10 @@
 #include "mongo/util/timer.h"
 
 namespace mongo {
+
+    using std::endl;
+    using std::string;
+    using std::vector;
 
     namespace {
         mongo::AtomicUInt64 mmfNextId(0);

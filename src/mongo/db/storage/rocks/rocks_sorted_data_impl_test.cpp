@@ -26,9 +26,12 @@
  *    it in the license file.
  */
 
+#include "mongo/platform/basic.h"
+
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <string>
 
 #include <rocksdb/comparator.h>
 #include <rocksdb/db.h>
@@ -48,6 +51,7 @@ namespace mongo {
 
     using boost::scoped_ptr;
     using boost::shared_ptr;
+    using std::string;
 
     class RocksSortedDataImplHarness : public HarnessHelper {
     public:
@@ -56,8 +60,7 @@ namespace mongo {
             rocksdb::DB* db;
             std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
             cfs.emplace_back();
-            cfs.emplace_back("sroted_data_impl", rocksdb::ColumnFamilyOptions());
-            cfs[1].options.comparator = RocksSortedDataImpl::newRocksComparator(_order);
+            cfs.emplace_back("sorted_data_impl", rocksdb::ColumnFamilyOptions());
             rocksdb::DBOptions db_options;
             db_options.create_if_missing = true;
             db_options.create_missing_column_families = true;

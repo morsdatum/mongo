@@ -48,6 +48,9 @@
 namespace mongo {
 
     using boost::scoped_ptr;
+    using std::endl;
+    using std::string;
+    using std::stringstream;
 
     /* Find and Modify an object returning either the old (default) or new value*/
     class CmdFindAndModify : public Command {
@@ -91,6 +94,10 @@ namespace mongo {
             if ( remove ) {
                 if ( upsert ) {
                     errmsg = "remove and upsert can't co-exist";
+                    return false;
+                }
+                if ( !update.isEmpty() ) {
+                    errmsg = "remove and update can't co-exist";
                     return false;
                 }
                 if ( returnNew ) {

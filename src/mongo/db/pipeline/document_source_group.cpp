@@ -26,10 +26,7 @@
 *    it in the license file.
 */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 
 #include "mongo/db/jsobj.h"
@@ -44,6 +41,8 @@ namespace mongo {
 
     using boost::intrusive_ptr;
     using boost::shared_ptr;
+    using std::pair;
+    using std::vector;
 
     const char DocumentSourceGroup::groupName[] = "$group";
 

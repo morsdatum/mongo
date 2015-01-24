@@ -118,6 +118,15 @@
 
 namespace mongo {
 
+    using std::auto_ptr;
+    using std::cout;
+    using std::cerr;
+    using std::endl;
+    using std::list;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     using logger::LogComponent;
 
     void (*snmpInit)() = NULL;
@@ -445,7 +454,7 @@ namespace mongo {
         }
 
         DEV log(LogComponent::kControl) << "_DEBUG build (which is slower)" << endl;
-        logMongodStartupWarnings();
+        logMongodStartupWarnings(storageGlobalParams);
 
 #if defined(_WIN32)
         printTargetMinOS();
@@ -737,7 +746,7 @@ static void startupConfigActions(const std::vector<std::string>& args) {
         string procPath;
         if (!failed){
             try {
-                ifstream f (name.c_str());
+                std::ifstream f (name.c_str());
                 f >> pid;
                 procPath = (str::stream() << "/proc/" << pid);
                 if (!boost::filesystem::exists(procPath))

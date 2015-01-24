@@ -46,6 +46,8 @@ namespace {
 
     using namespace mongo;
 
+    using std::string;
+
     bool filterMatches(const BSONObj& testFilter,
                        const QuerySolutionNode* trueFilterNode) {
         if (NULL == trueFilterNode->filter) { return false; }
@@ -55,7 +57,9 @@ namespace {
         }
         const boost::scoped_ptr<MatchExpression> root(swme.getValue());
         CanonicalQuery::sortTree(root.get());
-        return trueFilterNode->filter->equivalent(root.get());
+        boost::scoped_ptr<MatchExpression> trueFilter(trueFilterNode->filter->shallowClone());
+        CanonicalQuery::sortTree(trueFilter.get());
+        return trueFilter->equivalent(root.get());
     }
 
     void appendIntervalBound(BSONObjBuilder& bob, BSONElement& el) {

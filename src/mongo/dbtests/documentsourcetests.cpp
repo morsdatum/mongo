@@ -28,10 +28,7 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/thread.hpp>
@@ -51,6 +48,10 @@ namespace DocumentSourceTests {
 
     using boost::intrusive_ptr;
     using boost::shared_ptr;
+    using std::map;
+    using std::set;
+    using std::string;
+    using std::vector;
 
     static const char* const ns = "unittests.documentsourcetests";
     static const BSONObj metaTextScore = BSON("$meta" << "textScore");

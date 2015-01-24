@@ -29,10 +29,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include <boost/filesystem/convenience.hpp>
 #include <fstream>
@@ -49,6 +46,10 @@
 #include "mongo/util/text.h"
 
 namespace mongo {
+
+    using std::ifstream;
+    using std::string;
+    using std::stringstream;
 
     /**
      * These utilities are thread safe but do not provide mutually exclusive access to resources
@@ -158,7 +159,7 @@ namespace mongo {
             ifstream f(e.valuestrsafe());
             uassert(CANT_OPEN_FILE, "couldn't open file", f.is_open() );
 
-            streamsize sz = 0;
+            std::streamsize sz = 0;
             while( 1 ) {
                 char ch = 0;
                 // slow...maybe change one day

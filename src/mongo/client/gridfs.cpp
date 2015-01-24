@@ -27,10 +27,7 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/client/gridfs.h"
 
@@ -52,6 +49,14 @@
 
 
 namespace mongo {
+
+    using std::auto_ptr;
+    using std::cout;
+    using std::endl;
+    using std::ios;
+    using std::ofstream;
+    using std::ostream;
+    using std::string;
 
     const unsigned DEFAULT_CHUNK_SIZE = 255 * 1024;
 

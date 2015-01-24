@@ -76,6 +76,15 @@ namespace mongo {
     using boost::intrusive_ptr;
     using boost::scoped_ptr;
     using boost::shared_ptr;
+    using std::endl;
+    using std::list;
+    using std::make_pair;
+    using std::map;
+    using std::multimap;
+    using std::set;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     namespace dbgrid_pub_cmds {
 
@@ -1168,6 +1177,20 @@ namespace mongo {
                         else if ( str::equals( e.fieldName() , "userFlags" ) ) {
                             if ( ! result.hasField( e.fieldName() ) )
                                 result.append( e );
+                        }
+                        else if ( str::equals( e.fieldName() , "capped" ) ) {
+                            if ( ! result.hasField( e.fieldName() ) )
+                                result.append( e );
+                        }
+                        else if ( str::equals( e.fieldName() , "paddingFactorNote" ) ) {
+                            if ( ! result.hasField( e.fieldName() ) )
+                                result.append( e );
+                        }
+                        else if ( str::equals( e.fieldName() , "indexDetails" ) ) {
+                            //skip this field in the rollup
+                        }
+                        else if ( str::equals( e.fieldName() , "wiredTiger" ) ) {
+                            //skip this field in the rollup
                         }
                         else if ( str::equals( e.fieldName() , "nindexes" ) ) {
                             int myIndexes = e.numberInt();

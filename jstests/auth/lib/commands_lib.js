@@ -82,6 +82,7 @@ var firstDbName = "roles_commands_1";
 var secondDbName = "roles_commands_2";
 var adminDbName = "admin";
 var authErrCode = 13;
+var commandNotSupportedCode = 115;
 var shard0name = "shard0000";
 
 // useful shorthand when defining the tests below
@@ -1436,7 +1437,7 @@ var authCommandsLib = {
         },
         {
             testname: "listCollections",
-            command: {listCollections: 1, cursor: {}},
+            command: {listCollections: 1},
             setup: function (db) {
                 db.x.insert({_id: 5});
                 db.y.insert({_id: 6});
@@ -1475,7 +1476,7 @@ var authCommandsLib = {
         },
         {
             testname: "listIndexes",
-            command: {listIndexes: "x", cursor: {}},
+            command: {listIndexes: "x"},
             setup: function (db) {
                 db.x.insert({_id: 5});
                 db.x.insert({_id: 6});

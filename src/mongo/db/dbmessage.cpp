@@ -27,14 +27,14 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/dbmessage.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::stringstream;
 
     string Message::toString() const {
         stringstream ss;

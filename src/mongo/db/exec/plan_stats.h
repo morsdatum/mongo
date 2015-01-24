@@ -266,13 +266,17 @@ namespace mongo {
     };
 
     struct DeleteStats : public SpecificStats {
-        DeleteStats() : docsDeleted(0) { }
+        DeleteStats() : docsDeleted(0), nInvalidateSkips(0) { }
 
         virtual SpecificStats* clone() const {
             return new DeleteStats(*this);
         }
 
         size_t docsDeleted;
+
+        // Invalidated documents can be force-fetched, causing the now invalid RecordId to
+        // be thrown out. The delete stage skips over any results which do not have a RecordId.
+        size_t nInvalidateSkips;
     };
 
     struct DistinctScanStats : public SpecificStats {
@@ -577,14 +581,14 @@ namespace mongo {
 
         long long totalResultsFound() {
             long long totalResultsFound = 0;
-            for (vector<IntervalStats>::iterator it = intervalStats.begin();
+            for (std::vector<IntervalStats>::iterator it = intervalStats.begin();
                 it != intervalStats.end(); ++it) {
                 totalResultsFound += it->numResultsFound;
             }
             return totalResultsFound;
         }
 
-        vector<IntervalStats> intervalStats;
+        std::vector<IntervalStats> intervalStats;
         std::string indexName;
         BSONObj keyPattern;
     };
@@ -596,7 +600,8 @@ namespace mongo {
               isDocReplacement(false),
               fastmod(false),
               fastmodinsert(false),
-              inserted(false) { }
+              inserted(false),
+              nInvalidateSkips(0) { }
 
         virtual SpecificStats* clone() const {
             return new UpdateStats(*this);
@@ -626,6 +631,11 @@ namespace mongo {
 
         // The object that was inserted. This is an empty document if no insert was performed.
         BSONObj objInserted;
+
+        // Invalidated documents can be force-fetched, causing the now invalid RecordId to
+        // be thrown out. The update stage skips over any results which do not have the
+        // RecordId to update.
+        size_t nInvalidateSkips;
     };
 
     struct TextStats : public SpecificStats {

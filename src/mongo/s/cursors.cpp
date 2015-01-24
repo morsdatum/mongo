@@ -55,6 +55,9 @@
 namespace mongo {
 
     using boost::scoped_ptr;
+    using std::endl;
+    using std::string;
+    using std::stringstream;
 
     const int ShardedClientCursor::INIT_REPLY_BUFFER_SIZE = 32768;
 
@@ -242,7 +245,7 @@ namespace mongo {
 
     CursorCache::~CursorCache() {
         // TODO: delete old cursors?
-        bool print = logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(1));
+        bool print = shouldLog(logger::LogSeverity::Debug(1));
         if ( _cursors.size() || _refs.size() )
             print = true;
         verify(_refs.size() == _refsNS.size());

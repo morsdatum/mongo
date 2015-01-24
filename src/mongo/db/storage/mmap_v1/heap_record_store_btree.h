@@ -77,7 +77,7 @@ namespace mongo {
                                                  const char* data,
                                                  int len,
                                                  bool enforceQuota,
-                                                 UpdateMoveNotifier* notifier) {
+                                                 UpdateNotifier* notifier) {
             invariant(false);
         }
 
@@ -117,13 +117,6 @@ namespace mongo {
 
         virtual bool compactSupported() const { invariant(false); }
 
-        virtual Status compact(OperationContext* txn,
-                               RecordStoreCompactAdaptor* adaptor,
-                               const CompactOptions* options,
-                               CompactStats* stats) {
-            invariant(false);
-        }
-
         virtual Status validate(OperationContext* txn,
                                 bool full,
                                 bool scanData,
@@ -161,6 +154,12 @@ namespace mongo {
         virtual bool isCapped() const { invariant(false); }
 
         virtual const char* name() const { invariant(false); }
+
+        virtual void updateStatsAfterRepair(OperationContext* txn,
+                                            long long numRecords,
+                                            long long dataSize) {
+            invariant(false);
+        }
         // more things that we actually care about below
 
     private:
@@ -204,6 +203,8 @@ namespace mongo {
         }
 
         virtual void* writingPtr(void* data, size_t len);
+
+        virtual void setRollbackWritesDisabled() {}
 
         // -----------------------
 

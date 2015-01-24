@@ -36,6 +36,8 @@
 
 namespace mongo {
 
+    using std::string;
+
     TEST(DConcurrency, GlobalRead) {
         MMAPV1LockerImpl ls;
         Lock::GlobalRead globalRead(&ls);
@@ -168,6 +170,38 @@ namespace mongo {
 
         const ResourceId resIdDb(RESOURCE_DATABASE, string("db"));
         ASSERT(ls.getLockMode(resIdDb) == MODE_X);
+    }
+
+    TEST(DConcurrency, DBLockTakesISForAdminIS) {
+        DefaultLockerImpl ls;
+
+        Lock::DBLock dbRead(&ls, "admin", MODE_IS);
+
+        ASSERT(ls.getLockMode(resourceIdAdminDB) == MODE_IS);
+    }
+
+    TEST(DConcurrency, DBLockTakesSForAdminS) {
+        DefaultLockerImpl ls;
+
+        Lock::DBLock dbRead(&ls, "admin", MODE_S);
+
+        ASSERT(ls.getLockMode(resourceIdAdminDB) == MODE_S);
+    }
+
+    TEST(DConcurrency, DBLockTakesXForAdminIX) {
+        DefaultLockerImpl ls;
+
+        Lock::DBLock dbWrite(&ls, "admin", MODE_IX);
+
+        ASSERT(ls.getLockMode(resourceIdAdminDB) == MODE_X);
+    }
+
+    TEST(DConcurrency, DBLockTakesXForAdminX) {
+        DefaultLockerImpl ls;
+
+        Lock::DBLock dbWrite(&ls, "admin", MODE_X);
+
+        ASSERT(ls.getLockMode(resourceIdAdminDB) == MODE_X);
     }
 
     TEST(DConcurrency, MultipleWriteDBLocksOnSameThread) {

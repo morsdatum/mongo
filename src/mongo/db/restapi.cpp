@@ -31,10 +31,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/restapi.h"
 
@@ -56,6 +53,12 @@
 namespace mongo {
 
     bool getInitialSyncCompleted();
+
+    using std::auto_ptr;
+    using std::string;
+    using std::stringstream;
+    using std::endl;
+    using std::vector;
 
     using namespace html;
 

@@ -38,6 +38,8 @@
 
 namespace mongo {
 
+    using std::string;
+
     class RepairCursorCmd : public Command {
     public:
         RepairCursorCmd() : Command("repairCursor") {}
@@ -106,11 +108,7 @@ namespace mongo {
                                                 exec.release(),
                                                 ns.ns());
 
-            BSONObjBuilder cursorObj(result.subobjStart("cursor"));
-            cursorObj.append("id", cc->cursorid());
-            cursorObj.append("ns", ns);
-            cursorObj.append("firstBatch", BSONArray());
-            cursorObj.done();
+            appendCursorResponseObject(cc->cursorid(), ns.ns(), BSONArray(), &result);
 
             return true;
 

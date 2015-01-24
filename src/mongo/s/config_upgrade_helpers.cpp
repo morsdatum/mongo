@@ -45,6 +45,10 @@
 namespace mongo {
 
     using boost::scoped_ptr;
+    using std::auto_ptr;
+    using std::endl;
+    using std::string;
+
     using mongoutils::str::stream;
 
     // Custom field used in upgrade state to determine if/where we failed on last upgrade
@@ -348,7 +352,7 @@ namespace mongo {
         BSONObjBuilder unsetObj;
         unsetObj.append(VersionType::upgradeId(), 1);
         unsetObj.append(VersionType::upgradeState(), 1);
-        unsetObj.append("version", 1); // remove deprecated field, no longer supported >= v2.8.
+        unsetObj.append("version", 1); // remove deprecated field, no longer supported >= v3.0.
 
         Status result = clusterUpdate(VersionType::ConfigNS,
                 BSON("_id" << 1 << VersionType::currentVersion(currentVersion)),

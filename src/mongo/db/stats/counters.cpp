@@ -29,17 +29,18 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/stats/counters.h"
 
 #include "mongo/db/jsobj.h"
+#include "mongo/util/debug_util.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using std::endl;
+
     OpCounters::OpCounters() {}
 
     void OpCounters::incInsertInWriteLock(int n) {

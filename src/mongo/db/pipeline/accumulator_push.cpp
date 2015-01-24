@@ -26,10 +26,7 @@
  * it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/accumulator.h"
 #include "mongo/db/pipeline/expression_context.h"
@@ -38,6 +35,7 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
+    using std::vector;
 
     void AccumulatorPush::processInternal(const Value& input, bool merging) {
         if (!merging) {

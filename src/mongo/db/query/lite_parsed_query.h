@@ -108,7 +108,7 @@ namespace mongo {
         };
 
         /**
-         * Parses a count command object, 'cmdObj'. Caller must indicate whether or not
+         * Parses a find command object, 'cmdObj'. Caller must indicate whether or not
          * this lite parsed query is an explained query or not via 'isExplain'.
          *
          * On success, fills in the out-parameter 'parsedQuery' and returns an OK status.
@@ -183,7 +183,7 @@ namespace mongo {
         int getSkip() const { return _skip; }
         int getLimit() const { return _limit; }
         int getBatchSize() const { return _batchSize; }
-        int getNumToReturn() const { return min(_limit, _batchSize); }
+        int getNumToReturn() const { return std::min(_limit, _batchSize); }
         bool wantMore() const { return _wantMore; }
         bool hasReadPref() const { return _options.hasReadPref; }
 
@@ -262,9 +262,13 @@ namespace mongo {
         BSONObj _filter;
         BSONObj _sort;
         BSONObj _proj;
-        BSONObj _hint;
         bool _wantMore;
         bool _explain;
+
+        // The hint provided, if any.  If the hint was by index key pattern, the value of '_hint' is
+        // the key pattern hinted.  If the hint was by index name, the value of '_hint' is
+        // {$hint: <String>}, where <String> is the index name hinted.
+        BSONObj _hint;
 
         Options _options;
     };

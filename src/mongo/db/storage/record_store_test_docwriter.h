@@ -32,14 +32,12 @@
 
 #include "mongo/db/storage/record_store.h"
 
-using std::string;
-
 namespace mongo {
 namespace {
 
     class StringDocWriter : public DocWriter {
     public:
-        StringDocWriter( const string &data, bool padding )
+        StringDocWriter( const std::string &data, bool padding )
             : _data( data ), _padding( padding ) {
         }
 
@@ -54,7 +52,7 @@ namespace {
         bool addPadding() const { return _padding; }
 
     private:
-        string _data;
+        std::string _data;
         bool _padding;
     };
 

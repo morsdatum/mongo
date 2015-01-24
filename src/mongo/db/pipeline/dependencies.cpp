@@ -26,10 +26,7 @@
 *    it in the license file.
 */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/dependencies.h"
@@ -37,6 +34,11 @@
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+
+    using std::set;
+    using std::string;
+    using std::vector;
+
     namespace str = mongoutils::str;
 
     BSONObj DepsTracker::toProjection() const {

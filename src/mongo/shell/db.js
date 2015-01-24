@@ -118,7 +118,7 @@ DB.prototype.createCollection = function(name, opt) {
     var sendFlags = false;
     var flags = 0;
     if (options.usePowerOf2Sizes != undefined) {
-        print("WARNING: The 'usePowerOf2Sizes' flag is ignored in 2.8 and higher as all MMAPv1 "
+        print("WARNING: The 'usePowerOf2Sizes' flag is ignored in 3.0 and higher as all MMAPv1 "
             + "collections use fixed allocation sizes unless the 'noPadding' flag is specified");
 
         sendFlags = true;
@@ -629,7 +629,7 @@ DB.prototype._getCollectionInfosSystemNamespaces = function(){
 
 
 DB.prototype._getCollectionInfosCommand = function() {
-    var res = this.runCommand( "listCollections", { cursor: {} } );
+    var res = this.runCommand( "listCollections" );
     if ( res.code == 59 ) {
         // command doesn't exist, old mongod
         return null;
@@ -797,27 +797,32 @@ DB.prototype.printReplicationInfo = function() {
 
 DB.prototype.printSlaveReplicationInfo = function() {
     var startOptimeDate = null;
+    var primary = null;
 
     function getReplLag(st) {
         assert( startOptimeDate , "how could this be null (getReplLag startOptimeDate)" );
         print("\tsyncedTo: " + st.toString() );
         var ago = (startOptimeDate-st)/1000;
         var hrs = Math.round(ago/36)/100;
-        print("\t" + Math.round(ago) + " secs (" + hrs + " hrs) behind the primary ");
+        var suffix = "";
+        if (primary) {
+            suffix = "primary ";
+        }
+        else {
+            suffix = "freshest member (no primary available at the moment)";
+        }
+        print("\t" + Math.round(ago) + " secs (" + hrs + " hrs) behind the " + suffix);
     };
 
     function getMaster(members) {
-        var found;
-        members.forEach(function(row) {
-            if (row.self) {
-                found = row;
-                return false;
+        for (i in members) {
+            var row = members[i];
+            if (row.state === 1) {
+                return row;
             }
-        });
-
-        if (found) {
-            return found;
         }
+
+        return null;
     };
 
     function g(x) {
@@ -851,8 +856,23 @@ DB.prototype.printSlaveReplicationInfo = function() {
 
     if (L.system.replset.count() != 0) {
         var status = this.adminCommand({'replSetGetStatus' : 1});
-        startOptimeDate = getMaster(status.members).optimeDate; 
-        status.members.forEach(r);
+        primary = getMaster(status.members);
+        if (primary) {
+            startOptimeDate = primary.optimeDate; 
+        }
+        // no primary, find the most recent op among all members
+        else {
+            startOptimeDate = new Date(0, 0);
+            for (i in status.members) {
+                if (status.members[i].optimeDate > startOptimeDate) {
+                    startOptimeDate = status.members[i].optimeDate;
+                }
+            }
+        }
+
+        for (i in status.members) {
+            r(status.members[i]);
+        }
     }
     else if( L.sources.count() != 0 ) {
         startOptimeDate = new Date();
@@ -932,7 +952,7 @@ DB.prototype.listCommands = function(){
         var s = name + ": ";
 
         if (c.adminOnly) s += " adminOnly ";
-        if (c.adminOnly) s += " slaveOk ";
+        if (c.slaveOk) s += " slaveOk ";
 
         s += "\n  ";
         s += c.help.replace(/\n/g, '\n  ');

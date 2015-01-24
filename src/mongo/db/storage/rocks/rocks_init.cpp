@@ -1,5 +1,3 @@
-// rocks_init.cpp
-
 /**
  *    Copyright (C) 2014 MongoDB Inc.
  *
@@ -29,6 +27,8 @@
  *    it in the license file.
  */
 
+#include "mongo/platform/basic.h"
+
 #include "mongo/db/storage/rocks/rocks_engine.h"
 
 #include "mongo/base/init.h"
@@ -47,7 +47,10 @@ namespace mongo {
                 KVStorageEngineOptions options;
                 options.directoryPerDB = params.directoryperdb;
                 options.forRepair = params.repair;
-                return new KVStorageEngine(new RocksEngine(params.dbpath, params.dur), options);
+                // Mongo keeps some files in params.dbpath. To avoid collision, put out files under
+                // db/ directory
+                return new KVStorageEngine(new RocksEngine(params.dbpath + "/db", params.dur),
+                                           options);
             }
 
             virtual StringData getCanonicalName() const {

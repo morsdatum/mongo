@@ -47,7 +47,7 @@
 namespace mongo {
 
     class CollectionCatalogEntry;
-    class Database;
+    class DatabaseCatalogEntry;
     class ExtentManager;
     class IndexCatalog;
     class MultiIndexBlock;
@@ -99,13 +99,13 @@ namespace mongo {
      * this is NOT safe through a yield right now
      * not sure if it will be, or what yet
      */
-    class Collection : CappedDocumentDeleteCallback, UpdateMoveNotifier {
+    class Collection : CappedDocumentDeleteCallback, UpdateNotifier {
     public:
         Collection( OperationContext* txn,
                     const StringData& fullNS,
                     CollectionCatalogEntry* details, // does not own
                     RecordStore* recordStore, // does not own
-                    Database* database ); // does not own
+                    DatabaseCatalogEntry* dbce ); // does not own
 
         ~Collection();
 
@@ -290,7 +290,10 @@ namespace mongo {
                                        const char* oldBuffer,
                                        size_t oldSize );
 
-        Status aboutToDeleteCapped( OperationContext* txn, const RecordId& loc );
+        Status recordStoreGoingToUpdateInPlace( OperationContext* txn,
+                                                const RecordId& loc );
+
+        Status aboutToDeleteCapped( OperationContext* txn, const RecordId& loc, RecordData data );
 
         /**
          * same semantics as insertDocument, but doesn't do:
@@ -308,7 +311,7 @@ namespace mongo {
         NamespaceString _ns;
         CollectionCatalogEntry* _details;
         RecordStore* _recordStore;
-        Database* _database;
+        DatabaseCatalogEntry* _dbce;
         CollectionInfoCache _infoCache;
         IndexCatalog _indexCatalog;
 

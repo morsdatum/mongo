@@ -28,10 +28,7 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document.h"
 #include "mongo/db/pipeline/field_path.h"
@@ -40,6 +37,11 @@
 #include "mongo/util/print.h"
 
 namespace DocumentTests {
+
+    using std::endl;
+    using std::numeric_limits;
+    using std::string;
+    using std::vector;
 
     mongo::Document::FieldPair getNthField(mongo::Document doc, size_t index) {
         mongo::FieldIterator it (doc);
@@ -222,6 +224,10 @@ namespace DocumentTests {
                 assertComparison( -1, BSON( "a" << 1 << "b" << 1 ), BSON( "a" << 1 << "b" << 2 ) );
                 // numbers sort before strings
                 assertComparison( -1, BSON( "a" << 1 ), BSON( "a" << "foo" ) );
+                // numbers sort before strings, even if keys compare otherwise
+                assertComparison( -1, BSON( "b" << 1 ), BSON( "a" << "foo" ) );
+                // null before number, even if keys compare otherwise
+                assertComparison( -1, BSON( "z" << BSONNULL ), BSON( "a" << 1 ) );
             }
         public:
             int cmp( const BSONObj& a, const BSONObj& b ) {
@@ -242,19 +248,6 @@ namespace DocumentTests {
                 size_t seed = 0x106e1e1;
                 Document(obj).hash_combine(seed);
                 return seed;
-            }
-        };
-
-        /** Comparison based on a null field's name.  Differs from BSONObj comparison behavior. */
-        class CompareNamedNull {
-        public:
-            void run() {
-                BSONObj obj1 = BSON( "z" << BSONNULL );
-                BSONObj obj2 = BSON( "a" << 1 );
-                // Comparsion with type precedence.
-                ASSERT( obj1.woCompare( obj2 ) < 0 );
-                // Comparison with field name precedence.
-                ASSERT( Document::compare( fromBson( obj1 ), fromBson( obj2 ) ) > 0 );
             }
         };
 
@@ -1247,6 +1240,7 @@ namespace DocumentTests {
                 assertComparison( 0, fromjson( "{'':{}}" ), fromjson( "{'':{}}" ) );
                 assertComparison( 0, fromjson( "{'':{x:1}}" ), fromjson( "{'':{x:1}}" ) );
                 assertComparison( -1, fromjson( "{'':{}}" ), fromjson( "{'':{x:1}}" ) );
+                assertComparison( -1, fromjson( "{'':{'z': 1}}" ), fromjson( "{'':{'a': 'a'}}") );
 
                 // Array.
                 assertComparison( 0, fromjson( "{'':[]}" ), fromjson( "{'':[]}" ) );
@@ -1425,7 +1419,6 @@ namespace DocumentTests {
             add<Document::GetValue>();
             add<Document::SetField>();
             add<Document::Compare>();
-            add<Document::CompareNamedNull>();
             add<Document::Clone>();
             add<Document::CloneMultipleFields>();
             add<Document::FieldIteratorEmpty>();

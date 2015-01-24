@@ -43,6 +43,9 @@ using namespace mongo;
 namespace {
 
     using std::auto_ptr;
+    using std::numeric_limits;
+    using std::string;
+    using std::vector;
 
     double numberMin = -numeric_limits<double>::max();
     double numberMax = numeric_limits<double>::max();
@@ -492,8 +495,9 @@ namespace {
 
     TEST(IndexBoundsBuilderTest, ExistsTrueSparse) {
         IndexEntry testIndex = IndexEntry(BSONObj(),
-                                          false,
-                                          true,
+                                          false, // multikey
+                                          true, // sparse
+                                          false, // unique
                                           "exists_true_sparse",
                                           BSONObj());
         BSONObj obj = fromjson("{a: {$exists: true}}");

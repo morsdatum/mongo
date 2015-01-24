@@ -45,6 +45,10 @@
 
 namespace mongo {
 
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
     /**
      * Lists the indexes for a given collection.
      *
@@ -182,10 +186,6 @@ namespace mongo {
                                                         exec.release(),
                                                         cursorNamespace);
                 cursorId = cursor->cursorid();
-
-                cursor->setOwnedRecoveryUnit(txn->releaseRecoveryUnit());
-                StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
-                txn->setRecoveryUnit(storageEngine->newRecoveryUnit());
             }
 
             Command::appendCursorResponseObject( cursorId, cursorNamespace, firstBatch.arr(),

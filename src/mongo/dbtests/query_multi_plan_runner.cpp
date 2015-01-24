@@ -57,6 +57,8 @@ namespace mongo {
 namespace QueryMultiPlanRunner {
 
     using boost::scoped_ptr;
+    using std::auto_ptr;
+    using std::vector;
 
     /**
      * Create query solution.
@@ -245,7 +247,7 @@ namespace QueryMultiPlanRunner {
             QuerySolution* soln = mps->bestSolution();
             ASSERT(QueryPlannerTestLib::solutionMatches(
                              "{sort: {pattern: {b: 1}, limit: 0, node: "
-                                 "{fetch: {filter: null, node: {andSorted: {nodes: ["
+                                 "{fetch: {node: {andSorted: {nodes: ["
                                          "{ixscan: {filter: null, pattern: {a:1}}},"
                                          "{ixscan: {filter: null, pattern: {b:1}}}]}}}}}}",
                              soln->root.get()));
@@ -269,7 +271,7 @@ namespace QueryMultiPlanRunner {
             soln = mps->bestSolution();
             ASSERT(QueryPlannerTestLib::solutionMatches(
                              "{sort: {pattern: {b: 1}, limit: 0, node: "
-                                 "{fetch: {filter: null, node: {andSorted: {nodes: ["
+                                 "{fetch: {node: {andSorted: {nodes: ["
                                          "{ixscan: {filter: null, pattern: {a:1}}},"
                                          "{ixscan: {filter: null, pattern: {b:1}}}]}}}}}}",
                              soln->root.get()));

@@ -48,6 +48,8 @@ namespace mongo {
      * Simple blocking queue with optional max size (by count or custom sizing function).
      * A custom sizing function can optionally be given.  By default the getSize function
      * returns 1 for each item, resulting in size equaling the number of items queued.
+     *
+     * Note that use of this class is deprecated.  This class only works with a single consumer and      * a single producer.
      */
     template<typename T>
     class BlockingQueue : boost::noncopyable {
@@ -72,7 +74,7 @@ namespace mongo {
         void push(T const& t) {
             scoped_lock l( _lock );
             size_t tSize = _getSize(t);
-            while (_currentSize + tSize >= _maxSize) {
+            while (_currentSize + tSize > _maxSize) {
                 _cvNoLongerFull.wait( l.boost() );
             }
             _queue.push( t );
@@ -103,7 +105,7 @@ namespace mongo {
         /**
          * The number/count of items in the queue ( _queue.size() )
          */
-        int count() const {
+        size_t count() const {
             scoped_lock l( _lock );
             return _queue.size();
         }

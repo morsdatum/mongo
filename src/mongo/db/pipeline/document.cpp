@@ -26,10 +26,7 @@
  * it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/document.h"
 
@@ -43,6 +40,8 @@
 namespace mongo {
     using namespace mongoutils;
     using boost::intrusive_ptr;
+    using std::string;
+    using std::vector;
 
     Position DocumentStorage::findField(StringData requested) const {
         int reqSize = requested.size(); // get size calculation out of the way if needed
@@ -391,6 +390,13 @@ namespace mongo {
 
             const ValueElement& rField = rIt.get();
             const ValueElement& lField = lIt.get();
+
+            // For compatibility with BSONObj::woCompare() consider the canonical type of values
+            // before considerting their names.
+            const int rCType = canonicalizeBSONType(rField.val.getType());
+            const int lCType = canonicalizeBSONType(lField.val.getType());
+            if (lCType != rCType)
+                return lCType < rCType ? -1 : 1;
 
             const int nameCmp = lField.nameSD().compare(rField.nameSD());
             if (nameCmp)

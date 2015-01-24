@@ -97,6 +97,14 @@ namespace mongo {
 
     using boost::scoped_ptr;
     using logger::LogComponent;
+    using std::auto_ptr;
+    using std::endl;
+    using std::hex;
+    using std::ios;
+    using std::ofstream;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
 
     // for diaglog
     inline void opread(Message& m) {
@@ -489,24 +497,24 @@ namespace mongo {
                     << debug.report( currentOp ) << endl;
         }
 
-        if ( currentOp.shouldDBProfile( debug.executionTime ) ) {
-            // performance profiling is on
+        if (currentOp.shouldDBProfile(debug.executionTime)) {
+            // Performance profiling is on
             if (txn->lockState()->isReadLocked()) {
                 MONGO_LOG_COMPONENT(1, responseComponent)
-                        << "note: not profiling because recursive read lock" << endl;
+                        << "note: not profiling because recursive read lock";
             }
-            else if ( lockedForWriting() ) {
+            else if (lockedForWriting()) {
                 MONGO_LOG_COMPONENT(1, responseComponent)
-                        << "note: not profiling because doing fsync+lock" << endl;
+                        << "note: not profiling because doing fsync+lock";
             }
             else {
-                profile(txn, c, op, currentOp);
+                profile(txn, op);
             }
         }
 
         debug.recordStats();
         debug.reset();
-    } /* assembleResponse() */
+    }
 
     void receivedKillCursors(OperationContext* txn, Message& m) {
         DbMessage dbmessage(m);
@@ -525,7 +533,7 @@ namespace mongo {
 
         int found = CursorManager::eraseCursorGlobalIfAuthorized(txn, n, cursorArray);
 
-        if ( logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(1)) || found != n ) {
+        if ( shouldLog(logger::LogSeverity::Debug(1)) || found != n ) {
             LOG( found == n ? 1 : 0 ) << "killcursors: found " << found << " of " << n << endl;
         }
 
@@ -859,21 +867,32 @@ namespace mongo {
         if ( !fixed.getValue().isEmpty() )
             js = fixed.getValue();
 
-        WriteUnitOfWork wunit(txn);
-        Collection* collection = ctx.db()->getCollection( ns );
-        if ( !collection ) {
-            collection = ctx.db()->createCollection( txn, ns );
-            verify( collection );
-            repl::logOp(txn,
-                        "c",
-                        (ctx.db()->name() + ".$cmd").c_str(),
-                        BSON("create" << nsToCollectionSubstring(ns)));
-        }
+        int attempt = 0;
+        while ( true ) {
+            try {
+                WriteUnitOfWork wunit(txn);
+                Collection* collection = ctx.db()->getCollection( ns );
+                if ( !collection ) {
+                    collection = ctx.db()->createCollection( txn, ns );
+                    verify( collection );
+                    repl::logOp(txn,
+                                "c",
+                                (ctx.db()->name() + ".$cmd").c_str(),
+                                BSON("create" << nsToCollectionSubstring(ns)));
+                }
 
-        StatusWith<RecordId> status = collection->insertDocument( txn, js, true );
-        uassertStatusOK( status.getStatus() );
-        repl::logOp(txn, "i", ns, js);
-        wunit.commit();
+                StatusWith<RecordId> status = collection->insertDocument( txn, js, true );
+                uassertStatusOK( status.getStatus() );
+                repl::logOp(txn, "i", ns, js);
+                wunit.commit();
+                break;
+            }
+            catch( const WriteConflictException& e ) {
+                txn->getCurOp()->debug().writeConflicts++;
+                txn->recoveryUnit()->commitAndRestart();
+                WriteConflictException::logAndBackoff( attempt++, "insert", ns);
+            }
+        }
     }
 
     NOINLINE_DECL void insertMulti(OperationContext* txn,

@@ -27,10 +27,7 @@
  *    then also delete it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/util/net/httpclient.h"
 
@@ -42,6 +39,9 @@
 #include "mongo/util/net/ssl_manager.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::stringstream;
 
     //#define HD(x) cout << x << endl;
 #define HD(x)

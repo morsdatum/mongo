@@ -26,10 +26,7 @@
  * it in the license file.
  */
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/db/pipeline/expression.h"
 
@@ -48,7 +45,11 @@
 
 namespace mongo {
     using namespace mongoutils;
+
     using boost::intrusive_ptr;
+    using std::set;
+    using std::string;
+    using std::vector;
 
     /// Helper function to easily wrap constants with $const.
     static Value serializeConstant(Value val) {

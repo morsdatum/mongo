@@ -57,12 +57,13 @@
 namespace mongo {
 
     using boost::scoped_ptr;
+    using std::auto_ptr;
 
 namespace {
 
     /**
      * Declaration for the "newCollectionsUsePowerOf2Sizes" server parameter, which is now
-     * deprecated in 2.8.
+     * deprecated in 3.0.
      * Note that:
      * - setting to true performs a no-op.
      * - setting to false will fail.

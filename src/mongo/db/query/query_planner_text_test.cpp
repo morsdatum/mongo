@@ -44,6 +44,10 @@
 #include "mongo/util/assert_util.h"
 
 using namespace mongo;
+using std::cout;
+using std::endl;
+using std::string;
+using std::vector;
 
 namespace {
 
@@ -75,6 +79,7 @@ namespace {
             params.indices.push_back(IndexEntry(keyPattern,
                                                 multikey,
                                                 false,
+                                                false,
                                                 "hari_king_of_the_stove",
                                                 BSONObj()));
         }
@@ -83,6 +88,7 @@ namespace {
             params.indices.push_back(IndexEntry(keyPattern,
                                                 multikey,
                                                 sparse,
+                                                false,
                                                 "note_to_self_dont_break_build",
                                                 BSONObj()));
         }

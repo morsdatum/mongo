@@ -36,6 +36,7 @@
 
 #include <set>
 
+#include "mongo/base/checked_cast.h"
 #include "mongo/db/json.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/index/index_descriptor.h"
@@ -45,8 +46,9 @@
 #include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/db/storage_options.h"
-#include "mongo/util/log.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/fail_point.h"
+#include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
 #if 0
@@ -59,11 +61,13 @@
 
 namespace mongo {
 namespace {
+
+    using std::string;
+    using std::vector;
+
     static const int TempKeyMaxSize = 1024; // this goes away with SERVER-3372
 
     static const WiredTigerItem emptyItem(NULL, 0);
-
-    bool shouldCheckIndexVersions = true;
 
     static const int kMinimumIndexVersion = 6;
     static const int kCurrentIndexVersion = 6; // New indexes use this by default.
@@ -111,11 +115,6 @@ namespace {
 } // namespace
 
     // static
-    void WiredTigerIndex::disableVersionCheckForRepair() {
-        shouldCheckIndexVersions = false;
-    }
-
-    // static
     StatusWith<std::string> WiredTigerIndex::parseIndexOptions(const BSONObj& options) {
         BSONForEach(elem, options) {
             if (elem.fieldNameStringData() == "configString") {
@@ -151,7 +150,7 @@ namespace {
         // override values in the prefix, but not values in the suffix.
         ss << "type=file,leaf_page_max=16k,";
         if (wiredTigerGlobalOptions.useIndexPrefixCompression) {
-            ss << "prefix_compression,";
+            ss << "prefix_compression=true,";
         }
 
         ss << "block_compressor=" << wiredTigerGlobalOptions.indexBlockCompressor << ",";
@@ -205,17 +204,14 @@ namespace {
           _uri( uri ),
           _instanceId( WiredTigerSession::genCursorId() ) {
 
-        if (shouldCheckIndexVersions) {
-            Status versionStatus =
-                WiredTigerUtil::checkApplicationMetadataFormatVersion(ctx,
-                                                                      uri,
-                                                                      kMinimumIndexVersion,
-                                                                      kMaximumIndexVersion);
-            if (!versionStatus.isOK()) {
-                fassertFailedWithStatusNoTrace(28579, versionStatus);
-            }
+        Status versionStatus =
+            WiredTigerUtil::checkApplicationMetadataFormatVersion(ctx,
+                                                                  uri,
+                                                                  kMinimumIndexVersion,
+                                                                  kMaximumIndexVersion);
+        if (!versionStatus.isOK()) {
+            fassertFailedWithStatusNoTrace(28579, versionStatus);
         }
-
     }
 
     Status WiredTigerIndex::insert(OperationContext* txn,
@@ -335,7 +331,7 @@ namespace {
         WT_CURSOR *c = curwrap.get();
         if (!c)
             return true;
-        int ret = c->next(c);
+        int ret = WT_OP_CHECK(c->next(c));
         if (ret == WT_NOTFOUND)
             return true;
         invariantWTOK(ret);
@@ -351,12 +347,13 @@ namespace {
     bool WiredTigerIndex::isDup(WT_CURSOR *c, const BSONObj& key, const RecordId& loc ) {
         invariant( unique() );
         // First check whether the key exists.
-        KeyString data = KeyString::make( key, _ordering );
+        KeyString data( key, _ordering );
         WiredTigerItem item( data.getBuffer(), data.getSize() );
         c->set_key( c, item.Get() );
-        int ret = c->search(c);
-        if ( ret == WT_NOTFOUND )
+        int ret = WT_OP_CHECK(c->search(c));
+        if (ret == WT_NOTFOUND) {
             return false;
+        }
         invariantWTOK( ret );
 
         // If the key exists, check if we already have this loc at this key. If so, we don't
@@ -441,7 +438,7 @@ namespace {
                     return s;
             }
 
-            KeyString data = KeyString::make( key, _idx->_ordering, loc );
+            KeyString data( key, _idx->_ordering, loc );
 
             // Can't use WiredTigerCursor since we aren't using the cache.
             WiredTigerItem item(data.getBuffer(), data.getSize());
@@ -454,7 +451,7 @@ namespace {
 
             _cursor->set_value(_cursor, valueItem.Get());
 
-            invariantWTOK(_cursor->insert(_cursor));
+            invariantWTOK(WT_OP_CHECK(_cursor->insert(_cursor)));
             invariantWTOK(_cursor->reset(_cursor));
 
             return Status::OK();
@@ -548,7 +545,7 @@ namespace {
             _cursor->set_key(_cursor, keyItem.Get());
             _cursor->set_value(_cursor, valueItem.Get());
 
-            invariantWTOK(_cursor->insert(_cursor));
+            invariantWTOK(WT_OP_CHECK(_cursor->insert(_cursor)));
             invariantWTOK(_cursor->reset(_cursor));
 
             _records.clear();
@@ -582,22 +579,21 @@ namespace {
 
         virtual bool pointsToSamePlaceAs(const SortedDataInterface::Cursor& genOther) const {
             const WiredTigerIndexCursorBase& other =
-                dynamic_cast<const WiredTigerIndexCursorBase&>(genOther);
+                checked_cast<const WiredTigerIndexCursorBase&>(genOther);
 
             if ( _eof && other._eof )
                 return true;
             else if ( _eof || other._eof )
                 return false;
 
-            // Check the locs first since they are likely to differ and comparing them is fast.
-            if ( getRecordId() != other.getRecordId() )
+            // First try WT_CURSOR equals(), as this should be cheap.
+            int equal;
+            invariantWTOK(_cursor.get()->equals(_cursor.get(), other._cursor.get(), &equal));
+            if (!equal)
                 return false;
 
-            loadKeyIfNeeded();
-            other.loadKeyIfNeeded();
-
-            return _key.getSize() == other._key.getSize()
-                && memcmp(_key.getBuffer(), other._key.getBuffer(), _key.getSize()) == 0;
+            // WT says cursors are equal, but need to double-check that the RecordIds match.
+            return getRecordId() == other.getRecordId();
         }
 
         bool locate(const BSONObj &key, const RecordId& loc) {
@@ -683,7 +679,7 @@ namespace {
         void advanceWTCursor() {
             invalidateCache();
             WT_CURSOR *c = _cursor.get();
-            int ret = _forward ? c->next(c) : c->prev(c);
+            int ret = WT_OP_CHECK(_forward ? c->next(c) : c->prev(c));
             if ( ret == WT_NOTFOUND ) {
                 _eof = true;
                 return;
@@ -701,7 +697,7 @@ namespace {
             const WiredTigerItem keyItem(_key.getBuffer(), _key.getSize());
             c->set_key(c, keyItem.Get());
 
-            int ret = c->search_near(c, &cmp);
+            int ret = WT_OP_CHECK(c->search_near(c, &cmp));
             if ( ret == WT_NOTFOUND ) {
                 _eof = true;
                 TRACE_CURSOR << "\t not found";
@@ -723,13 +719,13 @@ namespace {
             if (_forward) {
                 // We need to be >=
                 if (cmp < 0) {
-                    ret = c->next(c);
+                    ret = WT_OP_CHECK(c->next(c));
                 }
             }
             else {
                 // We need to be <=
                 if (cmp > 0) {
-                    ret = c->prev(c);
+                    ret = WT_OP_CHECK(c->prev(c));
                 }
             }
 
@@ -999,17 +995,17 @@ namespace {
                                            const RecordId& loc,
                                            bool dupsAllowed ) {
 
-        const KeyString data = KeyString::make( key, _ordering );
+        const KeyString data( key, _ordering );
         WiredTigerItem keyItem( data.getBuffer(), data.getSize() );
 
-        KeyString value = KeyString::make(loc);
+        KeyString value(loc);
         if (!data.getTypeBits().isAllZeros())
             value.appendTypeBits(data.getTypeBits());
 
         WiredTigerItem valueItem(value.getBuffer(), value.getSize());
         c->set_key( c, keyItem.Get() );
         c->set_value( c, valueItem.Get() );
-        int ret = c->insert( c );
+        int ret = WT_OP_CHECK(c->insert(c));
 
         if ( ret == WT_ROLLBACK && !dupsAllowed ) {
             // if there is a conflict on a unique key, it means there is a dup key
@@ -1025,7 +1021,7 @@ namespace {
         // we put them all in the "list"
         // Note that we can't omit AllZeros when there are multiple locs for a value. When we remove
         // down to a single value, it will be cleaned up.
-        ret = c->search(c);
+        ret = WT_OP_CHECK(c->search(c));
         invariantWTOK( ret );
 
         WT_ITEM old;
@@ -1040,7 +1036,7 @@ namespace {
             if (loc == locInIndex)
                 return Status::OK(); // already in index
 
-            if (loc < locInIndex) {
+            if (!insertedLoc && loc < locInIndex) {
                 value.appendRecordId(loc);
                 value.appendTypeBits(data.getTypeBits());
                 insertedLoc = true;
@@ -1069,13 +1065,13 @@ namespace {
                                           const BSONObj& key,
                                           const RecordId& loc,
                                           bool dupsAllowed ) {
-        KeyString data = KeyString::make( key, _ordering );
+        KeyString data( key, _ordering );
         WiredTigerItem keyItem( data.getBuffer(), data.getSize() );
         c->set_key( c, keyItem.Get() );
 
         if ( !dupsAllowed ) {
             // nice and clear
-            int ret = c->remove(c);
+            int ret = WT_OP_CHECK(c->remove(c));
             if (ret == WT_NOTFOUND) {
                 return;
             }
@@ -1085,7 +1081,7 @@ namespace {
 
         // dups are allowed, so we have to deal with a vector of RecordIds.
 
-        int ret = c->search(c);
+        int ret = WT_OP_CHECK(c->search(c));
         if ( ret == WT_NOTFOUND )
             return;
         invariantWTOK( ret );
@@ -1105,7 +1101,7 @@ namespace {
                 if (records.empty() && !br.remaining()) {
                     // This is the common case: we are removing the only loc for this key.
                     // Remove the whole entry.
-                    invariantWTOK(c->remove(c));
+                    invariantWTOK(WT_OP_CHECK(c->remove(c)));
                     return;
                 }
 
@@ -1167,7 +1163,7 @@ namespace {
 
         TRACE_INDEX << " key: " << keyBson << " loc: " << loc;
 
-        KeyString key = KeyString::make( keyBson, _ordering, loc );
+        KeyString key( keyBson, _ordering, loc );
         WiredTigerItem keyItem( key.getBuffer(), key.getSize() );
 
         WiredTigerItem valueItem = 
@@ -1177,7 +1173,7 @@ namespace {
 
         c->set_key(c, keyItem.Get());
         c->set_value(c, valueItem.Get());
-        int ret = c->insert( c );
+        int ret = WT_OP_CHECK(c->insert(c));
 
         if ( ret != WT_DUPLICATE_KEY )
             return wtRCToStatus( ret );
@@ -1192,10 +1188,10 @@ namespace {
                                             const RecordId& loc,
                                             bool dupsAllowed ) {
         invariant( dupsAllowed );
-        KeyString data = KeyString::make( key, _ordering, loc );
+        KeyString data( key, _ordering, loc );
         WiredTigerItem item( data.getBuffer(), data.getSize() );
         c->set_key(c, item.Get() );
-        int ret = c->remove(c);
+        int ret = WT_OP_CHECK(c->remove(c));
         if (ret != WT_NOTFOUND) {
             invariantWTOK(ret);
         }

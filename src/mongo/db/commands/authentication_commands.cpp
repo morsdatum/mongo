@@ -63,6 +63,10 @@
 
 namespace mongo {
 
+    using std::hex;
+    using std::string;
+    using std::stringstream;
+
     static bool _isCRAuthDisabled;
     static bool _isX509AuthDisabled;
     static const char _nonceAuthenticationDisabledMessage[] = 
@@ -267,6 +271,11 @@ namespace mongo {
         }
         string pwd = userObj->getCredentials().password;
         getGlobalAuthorizationManager()->releaseUser(userObj);
+
+        if (pwd.empty()) {
+            return Status(ErrorCodes::AuthenticationFailed,
+                          "MONGODB-CR credentials missing in the user document");
+        }
 
         md5digest d;
         {

@@ -52,7 +52,13 @@
 using namespace mongoutils;
 
 namespace mongo {
+
+    using std::dec;
+    using std::endl;
+    using std::hex;
+    using std::map;
     using std::pair;
+    using std::string;
 
     void DurableMappedFile::remapThePrivateView() {
         verify(storageGlobalParams.dur);
@@ -277,16 +283,12 @@ namespace mongo {
         _view_write = _view_private = 0;
     }
 
-    namespace dur {
-        void closingFileNotification();
-    }
-
     DurableMappedFile::~DurableMappedFile() {
         try { 
             LOG(3) << "mmf close " << filename();
 
             // Notify the durability system that we are closing a file.
-            dur::closingFileNotification();
+            getDur().closingFileNotification();
 
             LockMongoFilesExclusive lk;
             privateViews.remove(_view_private, length());

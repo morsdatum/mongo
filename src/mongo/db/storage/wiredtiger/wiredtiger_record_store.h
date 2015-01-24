@@ -41,6 +41,13 @@
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/capped_callback.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/util/fail_point_service.h"
+
+/**
+ * Either executes the specified operation and returns it's value or randomly throws a write
+ * conflict exception if the WTWriteConflictException failpoint is enabled.
+ */
+#define WT_OP_CHECK(x) (((MONGO_FAIL_POINT(WTWriteConflictException))) ? (WT_ROLLBACK) : (x))
 
 namespace mongo {
 
@@ -122,7 +129,7 @@ namespace mongo {
                                                   const char* data,
                                                   int len,
                                                   bool enforceQuota,
-                                                  UpdateMoveNotifier* notifier );
+                                                  UpdateNotifier* notifier );
 
         virtual bool updateWithDamagesSupported() const;
 
@@ -142,6 +149,7 @@ namespace mongo {
         virtual Status truncate( OperationContext* txn );
 
         virtual bool compactSupported() const { return true; }
+        virtual bool compactsInPlace() const { return true; }
 
         virtual Status compact( OperationContext* txn,
                                 RecordStoreCompactAdaptor* adaptor,
@@ -159,8 +167,6 @@ namespace mongo {
                                         BSONObjBuilder* result,
                                         double scale ) const;
 
-        virtual Status touch( OperationContext* txn, BSONObjBuilder* output ) const;
-
         virtual Status setCustomOption( OperationContext* txn,
                                         const BSONElement& option,
                                         BSONObjBuilder* info = NULL );
@@ -174,6 +180,10 @@ namespace mongo {
 
         virtual Status oplogDiskLocRegister( OperationContext* txn,
                                              const OpTime& opTime );
+
+        virtual void updateStatsAfterRepair(OperationContext* txn,
+                                            long long numRecords,
+                                            long long dataSize);
 
         bool isOplog() const { return _isOplog; }
         bool usingOplogHack() const { return _useOplogHack; }
@@ -258,6 +268,7 @@ namespace mongo {
         const bool _isCapped;
         const bool _isOplog;
         const int64_t _cappedMaxSize;
+        const int64_t _cappedMaxSizeSlack; // when to start applying backpressure
         const int64_t _cappedMaxDocs;
         CappedDocumentDeleteCallback* _cappedDeleteCallback;
         int _cappedDeleteCheckCount; // see comment in ::cappedDeleteAsNeeded
@@ -278,4 +289,8 @@ namespace mongo {
         WiredTigerSizeStorer* _sizeStorer; // not owned, can be NULL
         int _sizeStorerCounter;
     };
+
+    // WT failpoint to throw write conflict exceptions randomly
+    MONGO_FP_FORWARD_DECLARE(WTWriteConflictException);
+
 }

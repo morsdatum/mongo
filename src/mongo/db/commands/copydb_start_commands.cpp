@@ -28,10 +28,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kAccessControl
 
-#define MONGO_PCH_WHITELISTED
 #include "mongo/platform/basic.h"
-#include "mongo/pch.h"
-#undef MONGO_PCH_WHITELISTED
 
 #include "mongo/base/init.h"
 #include "mongo/base/status.h"
@@ -59,6 +56,9 @@
 #include "mongo/util/log.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::stringstream;
 
     // SERVER-4328 todo review for concurrency
     // :(
