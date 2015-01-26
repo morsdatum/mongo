@@ -115,7 +115,7 @@ namespace mongo {
                 return;
             }
 
-            string key = toSTLString(name);
+	    std::string key = toSTLString(name);
             BSONHolder* holder = unwrapHolder(scope, info.Holder());
             if (!holder || holder->_removed.count(key))
                 return;
@@ -143,7 +143,7 @@ namespace mongo {
             result.Set(v8AssertionException(dbEx.toString()));
         }
         catch (...) {
-            result.Set(v8AssertionException(string("error getting property ") + toSTLString(name)));
+	  result.Set(v8AssertionException(std::string("error getting property ") + toSTLString(name)));
         }
     }
 
@@ -158,7 +158,7 @@ namespace mongo {
         v8::Local<v8::Value> val;
         v8::ReturnValue<v8::Value> result = info.GetReturnValue();
         result.Set(val);
-        string key = toSTLString(name);
+	std::string key = toSTLString(name);
         V8Scope* scope = getScope(info.GetIsolate());
         BSONHolder* holder = unwrapHolder(scope, info.Holder());
         if (!holder) return;
@@ -217,7 +217,7 @@ namespace mongo {
         v8::Local<v8::Boolean> val;
         v8::ReturnValue<v8::Boolean> result = info.GetReturnValue();
         result.Set(val);
-        string key = toSTLString(name);
+	std::string key = toSTLString(name);
         V8Scope* scope = getScope(info.GetIsolate());
         BSONHolder* holder = unwrapHolder(scope, info.Holder());
         if (!holder) return;
@@ -243,7 +243,7 @@ namespace mongo {
                 // value already cached or added
                 result.Set(realObject->Get(index));
             }
-            string key = str::stream() << index;
+	    std::string key = str::stream() << index;
 
             BSONHolder* holder = unwrapHolder(scope, info.Holder());
             if (!holder) return;
@@ -277,7 +277,7 @@ namespace mongo {
         v8::Local<v8::Boolean> val;
         v8::ReturnValue<v8::Boolean> result = info.GetReturnValue();
         result.Set(val);
-        string key = str::stream() << index;
+	std::string key = str::stream() << index;
         V8Scope* scope = getScope(info.GetIsolate());
         BSONHolder* holder = unwrapHolder(scope, info.Holder());
         if (!holder) return;
@@ -300,7 +300,7 @@ namespace mongo {
         v8::Local<v8::Value> val;
         v8::ReturnValue<v8::Value> result = info.GetReturnValue();
         result.Set(val);
-        string key = str::stream() << index;
+	std::string key = str::stream() << index;
         V8Scope* scope = getScope(info.GetIsolate());
         BSONHolder* holder = unwrapHolder(scope, info.Holder());
         if (!holder) return;
@@ -315,7 +315,7 @@ namespace mongo {
 
     void NamedReadOnlySet(v8::Local<v8::String> property, v8::Local<v8::Value> value,
                           const v8::PropertyCallbackInfo<v8::Value>& info) {
-        cout << "cannot write property " << V8String(property) << " to read-only object" << endl;
+      std::cout << "cannot write property " << V8String(property) << " to read-only object" << std::endl;
         v8::ReturnValue<v8::Value> result = info.GetReturnValue();
         result.Set(value);
     }
@@ -324,7 +324,7 @@ namespace mongo {
                              const v8::PropertyCallbackInfo<v8::Boolean>& info) {
         v8::ReturnValue<v8::Boolean> result = info.GetReturnValue();
         result.Set(v8::Boolean::New(info.GetIsolate(), false));
-        cout << "cannot delete property " << V8String(property) << " from read-only object" << endl;
+	std::cout << "cannot delete property " << V8String(property) << " from read-only object" << std::endl;
     }
 
     void IndexedReadOnlySet(uint32_t index, v8::Local<v8::Value> value,
@@ -332,13 +332,13 @@ namespace mongo {
         v8::Local<v8::Value> val;
         v8::ReturnValue<v8::Value> result = info.GetReturnValue();
         result.Set(val);
-        cout << "cannot write property " << index << " to read-only array" << endl;
+	std::cout << "cannot write property " << index << " to read-only array" << std::endl;
     }
 
     void IndexedReadOnlyDelete(uint32_t index, const v8::PropertyCallbackInfo<v8::Boolean>& info) {
         v8::ReturnValue<v8::Boolean> result = info.GetReturnValue();
         result.Set(v8::Boolean::New(info.GetIsolate(), false));
-        cout << "cannot delete property " << index << " from read-only array" << endl;
+	std::cout << "cannot delete property " << index << " from read-only array" << std::endl;
     }
 
     /**
@@ -351,7 +351,7 @@ namespace mongo {
 
     template <typename _GCState>
     void gcCallback(v8::GCType type, v8::GCCallbackFlags flags) {
-        if (!logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(1)))
+      if (!logger::globalLogDomain()->shouldLog(mongo::logger::LogComponent(logger::LogComponent::kDefault),logger::LogSeverity::Debug(1)))
              // don't collect stats unless verbose
              return;
 
@@ -363,7 +363,7 @@ namespace mongo {
                << " exec: " << stats.total_heap_size_executable()
                << " used: " << stats.used_heap_size()<< " limit: "
                << stats.heap_size_limit()
-               << endl;
+               << std::endl;
      }
 
      V8ScriptEngine::V8ScriptEngine() :
@@ -395,10 +395,10 @@ namespace mongo {
          if (iScope == _opToScopeMap.end()) {
              // got interrupt request for a scope that no longer exists
              LOG(1) << "received interrupt request for unknown op: " << opId
-                    << printKnownOps_inlock() << endl;
+                    << printKnownOps_inlock() << std::endl;
              return;
          }
-         LOG(1) << "interrupting op: " << opId << printKnownOps_inlock() << endl;
+         LOG(1) << "interrupting op: " << opId << printKnownOps_inlock() << std::endl;
          iScope->second->kill();
      }
 
@@ -425,7 +425,7 @@ namespace mongo {
      void V8Scope::unregisterOperation() {
          scoped_lock giLock(_engine->_globalInterruptLock);
          LOG(2) << "V8Scope " << static_cast<const void*>(this) << " unregistered for op "
-                << _opId << endl;
+                << _opId << std::endl;
         if (_opId != 0) {
             // scope is currently associated with an operation id
             V8ScriptEngine::OpIdToScopeMap::iterator it = _engine->_opToScopeMap.find(_opId);
@@ -440,13 +440,13 @@ namespace mongo {
         mongo::mutex::scoped_lock cbEnterLock(_interruptLock);
         if (v8::V8::IsExecutionTerminating(_isolate)) {
             LOG(2) << "v8 execution interrupted.  isolate: "
-                   << static_cast<const void*>(_isolate) << endl;
+                   << static_cast<const void*>(_isolate) << std::endl;
             return false;
         }
         if (isKillPending()) {
             // kill flag was set before entering our callback
             LOG(2) << "marked for death while leaving callback.  isolate: "
-                   << static_cast<const void*>(_isolate) << endl;
+                   << static_cast<const void*>(_isolate) << std::endl;
             v8::V8::TerminateExecution(_isolate);
             return false;
         }
@@ -460,12 +460,12 @@ namespace mongo {
         _inNativeExecution = false;
         if (v8::V8::IsExecutionTerminating(_isolate)) {
             LOG(2) << "v8 execution interrupted.  isolate: "
-                   << static_cast<const void*>(_isolate) << endl;
+                   << static_cast<const void*>(_isolate) << std::endl;
             return false;
         }
         if (isKillPending()) {
             LOG(2) << "marked for death while leaving callback.  isolate: "
-                   << static_cast<const void*>(_isolate) << endl;
+                   << static_cast<const void*>(_isolate) << std::endl;
             v8::V8::TerminateExecution(_isolate);
             return false;
         }
@@ -478,10 +478,10 @@ namespace mongo {
             // Set the TERMINATE flag on the stack guard for this isolate.
             // This won't happen between calls to nativePrologue and nativeEpilogue().
             v8::V8::TerminateExecution(_isolate);
-            LOG(1) << "killing v8 scope.  isolate: " << static_cast<const void*>(_isolate) << endl;
+            LOG(1) << "killing v8 scope.  isolate: " << static_cast<const void*>(_isolate) << std::endl;
         }
         LOG(1) << "marking v8 scope for death.  isolate: " << static_cast<const void*>(_isolate)
-                << endl;
+	       << std::endl;
         _pendingKill = true;
     }
 
@@ -498,12 +498,12 @@ namespace mongo {
      * Display a list of all known ops (for verbose output)
      */
     std::string V8ScriptEngine::printKnownOps_inlock() {
-        stringstream out;
-        if (logger::globalLogDomain()->shouldLog(logger::LogSeverity::Debug(2))) {
-            out << "  known ops: " << endl;
+      std::stringstream out;
+      if (logger::globalLogDomain()->shouldLog(mongo::logger::LogComponent(logger::LogComponent::kDefault),logger::LogSeverity::Debug(2))) {
+	  out << "  known ops: " << std::endl;
             for(OpIdToScopeMap::iterator iSc = _opToScopeMap.begin();
                 iSc != _opToScopeMap.end(); ++iSc) {
-                out << "  " << iSc->first << endl;
+	      out << "  " << iSc->first << std::endl;
             }
         }
         return out.str();
@@ -610,7 +610,7 @@ namespace mongo {
         for (int i = 0; i < args.Length(); ++i) {
             std::string filename(toSTLString(args[i]));
             if (!scope->execFile(filename, false, true)) {
-                return v8AssertionException(string("error loading js file: ") + filename);
+	      return v8AssertionException(std::string("error loading js file: ") + filename);
             }
         }
         return v8::True(scope->getIsolate());
@@ -619,7 +619,7 @@ namespace mongo {
     v8::Local<v8::Value> V8Scope::nativeCallback(V8Scope* scope,
                                                  const v8::FunctionCallbackInfo<v8::Value> &args) {
         BSONObj ret;
-        string exceptionText;
+	std::string exceptionText;
         v8::EscapableHandleScope handle_scope(args.GetIsolate());
         try {
             v8::Local<v8::External> f = args.Callee()->GetHiddenValue(
@@ -663,7 +663,7 @@ namespace mongo {
         v8::Local<v8::External> f = v8::Local<v8::External>::Cast(args.Data());
         v8Function function = (v8Function)(f->Value());
         v8::Local<v8::Value> ret;
-        string exceptionText;
+	std::string exceptionText;
 
         try {
             // execute the native function
@@ -782,7 +782,7 @@ namespace mongo {
         return get(field)->ToInteger()->Value();
     }
 
-    string V8Scope::getString(const char *field) {
+  std::string V8Scope::getString(const char *field) {
         V8_SIMPLE_HEADER
         return toSTLString(get(field));
     }
@@ -921,7 +921,7 @@ namespace mongo {
     }
 
     std::string V8Scope::v8ExceptionToSTLString(const v8::TryCatch* try_catch) {
-        stringstream ss;
+      std::stringstream ss;
         v8::Local<v8::Value> stackTrace = try_catch->StackTrace();
         if (!stackTrace.IsEmpty()) {
             ss << StringData(V8String(stackTrace));
@@ -940,16 +940,16 @@ namespace mongo {
         if (!*resourceName)
             return ss.str();
 
-        string resourceNameString = *resourceName;
+	std::string resourceNameString = *resourceName;
         if (resourceNameString.compare("undefined") == 0)
             return ss.str();
         if (resourceNameString.find("_funcs") == 0) {
             // script loaded from __createFunction
-            string code;
+	  std::string code;
             // find the source script based on the resource name supplied to v8::Script::Compile().
             // this is accomplished by converting the integer after the '_funcs' prefix.
             unsigned int funcNum = str::toUnsigned(resourceNameString.substr(6));
-            for (map<string, ScriptingFunction>::iterator it = getFunctionCache().begin();
+            for (std::map<std::string, ScriptingFunction>::iterator it = getFunctionCache().begin();
                  it != getFunctionCache().end();
                  ++it) {
                 if (it->second == funcNum) {
@@ -979,9 +979,9 @@ namespace mongo {
                     displayRange > static_cast<int>(code.length()))
                     return ss.str();
 
-                string codeNear = code.substr(startPos, displayRange);
+		std::string codeNear = code.substr(startPos, displayRange);
                 for (size_t newLine = codeNear.find('\n');
-                     newLine != string::npos;
+                     newLine != std::string::npos;
                      newLine = codeNear.find('\n')) {
                     if (static_cast<int>(newLine) > displayRange - kPadding) {
                         // truncate at first newline past the reported end position
@@ -1025,17 +1025,17 @@ namespace mongo {
         v8::EscapableHandleScope handle_scope(_isolate);
         v8::TryCatch try_catch;
         raw = jsSkipWhiteSpace(raw);
-        string code = raw;
+	std::string code = raw;
         if (!hasFunctionIdentifier(code)) {
-            if (code.find('\n') == string::npos &&
+	  if (code.find('\n') == std::string::npos &&
                     ! hasJSReturn(code) &&
-                    (code.find(';') == string::npos || code.find(';') == code.size() - 1)) {
+		(code.find(';') == std::string::npos || code.find(';') == code.size() - 1)) {
                 code = "return " + code;
             }
             code = "function(){ " + code + "}";
         }
 
-        string fn = str::stream() << "_funcs" << functionNumber;
+	std::string fn = str::stream() << "_funcs" << functionNumber;
         code = str::stream() << fn << " = " << code;
 
         v8::Local<v8::Script> script = v8::Script::Compile(
@@ -1108,7 +1108,7 @@ namespace mongo {
 
         if (!nativeEpilogue()) {
             _error = "JavaScript execution terminated";
-            error() << _error << endl;
+            error() << _error << std::endl;
             uasserted(16711, _error);
         }
 
@@ -1124,7 +1124,7 @@ namespace mongo {
 
         if (!nativePrologue()) {
             _error = "JavaScript execution terminated";
-            error() << _error << endl;
+            error() << _error << std::endl;
             uasserted(16712, _error);
         }
 
@@ -1136,7 +1136,7 @@ namespace mongo {
             // must validate the handle because TerminateExecution may have
             // been thrown after the above checks
             if (!resultObject.IsEmpty() && resultObject->Has(strLitToV8("_v8_function"))) {
-                log() << "storing native function as return value" << endl;
+	      log() << "storing native function as return value" << std::endl;
                 _lastRetIsNativeCode = true;
             }
             else {
@@ -1149,7 +1149,7 @@ namespace mongo {
         return 0;
     }
 
-    bool V8Scope::exec(const StringData& code, const string& name, bool printResult,
+  bool V8Scope::exec(const StringData& code, const std::string& name, bool printResult,
                        bool reportError, bool assertOnError, int timeoutMs) {
         V8_SIMPLE_HEADER
         v8::TryCatch try_catch;
@@ -1163,7 +1163,7 @@ namespace mongo {
         if (!nativeEpilogue()) {
             _error = "JavaScript execution terminated";
             if (reportError)
-                error() << _error << endl;
+	      error() << _error << std::endl;
             if (assertOnError)
                 uasserted(13475, _error);
             return false;
@@ -1182,7 +1182,7 @@ namespace mongo {
         if (!nativePrologue()) {
             _error = "JavaScript execution terminated";
             if (reportError)
-                error() << _error << endl;
+	      error() << _error << std::endl;
             if (assertOnError)
                 uasserted(16721, _error);
             return false;
@@ -1196,7 +1196,7 @@ namespace mongo {
 
         if (printResult && !result->IsUndefined()) {
             // appears to only be used by shell
-            cout << V8String(result) << endl;
+	  std::cout << V8String(result) << std::endl;
         }
 
         return true;
@@ -1303,7 +1303,7 @@ namespace mongo {
             injectV8Function("Mongo", MongoFT(), global);
             execCoreFiles();
             exec("_mongo = new Mongo();", "local connect 2", false, true, true, 0);
-            exec((string)"db = _mongo.getDB(\"" + dbName + "\");", "local connect 3",
+            exec((std::string)"db = _mongo.getDB(\"" + dbName + "\");", "local connect 3",
                  false, true, true, 0);
             _connectState = LOCAL;
             _localDBName = dbName;
@@ -1405,7 +1405,7 @@ namespace mongo {
     v8::Local<v8::Value> V8Scope::newFunction(const StringData& code) {
         v8::EscapableHandleScope handle_scope(_isolate);
         v8::TryCatch try_catch;
-        string codeStr = str::stream() << "____MongoToV8_newFunction_temp = " << code;
+	std::string codeStr = str::stream() << "____MongoToV8_newFunction_temp = " << code;
 
         v8::Local<v8::Script> compiled = v8::Script::Compile(v8StringData(codeStr));
 
@@ -1424,7 +1424,7 @@ namespace mongo {
         v8::EscapableHandleScope handle_scope(_isolate);
         v8::Local<v8::Function> idCons = ObjectIdFT()->GetFunction();
         v8::Local<v8::Value> argv[1];
-        const string& idString = id.toString();
+        const std::string& idString = id.toString();
         argv[0] = v8StringData(idString);
         return handle_scope.Escape(idCons->NewInstance(1, argv));
     }
@@ -1473,7 +1473,7 @@ namespace mongo {
             return newFunction(elem.valueStringData());
         case CodeWScope:
             if (!elem.codeWScopeObject().isEmpty())
-                warning() << "CodeWScope doesn't transfer to db.eval" << endl;
+	      warning() << "CodeWScope doesn't transfer to db.eval" << std::endl;
             return newFunction(StringData(elem.codeWScopeCode(), elem.codeWScopeCodeLen() - 1));
         case mongo::Symbol:
         case mongo::String: {
@@ -1531,7 +1531,7 @@ namespace mongo {
         case mongo::BinData: {
             int len;
             const char *data = elem.binData(len);
-            stringstream ss;
+            std::stringstream ss;
             base64::encode(ss, data, len);
             argv[0] = v8::Number::New(_isolate, elem.binDataType());
             argv[1] = v8StringData(ss.str());
@@ -1619,7 +1619,7 @@ namespace mongo {
         verify(DBPointerFT()->HasInstance(obj));
         v8::Local<v8::Value> theid = obj->Get(strLitToV8("id"));
         OID oid = v8ToMongoObjectID(theid->ToObject());
-        string ns = toSTLString(obj->Get(strLitToV8("ns")));
+	std::string ns = toSTLString(obj->Get(strLitToV8("ns")));
         b.appendDBRef(elementName, ns, oid);
     }
 
@@ -1638,7 +1638,7 @@ namespace mongo {
 
     OID V8Scope::v8ToMongoObjectID(v8::Local<v8::Object> obj) {
         verify(ObjectIdFT()->HasInstance(obj));
-        const string hexStr = toSTLString(obj->Get(strLitToV8("str")));
+        const std::string hexStr = toSTLString(obj->Get(strLitToV8("str")));
 
         // OID parser doesn't have user-friendly error messages
         uassert(16864, "ObjectID.str must be exactly 24 chars long",
@@ -1697,7 +1697,7 @@ namespace mongo {
                 str::stream() << "JavaScript property (name) contains a null char "
                               << "which is not allowed in BSON. "
                               << originalParent->jsonString(),
-                (string::npos == sname.find('\0')) );
+                (std::string::npos == sname.find('\0')) );
 
         if (value->IsString()) {
             b.append(sname, V8String(value));
@@ -1719,7 +1719,7 @@ namespace mongo {
             v8::Local<v8::Array> array = value.As<v8::Array>();
             const int len = array->Length();
             for (int i=0; i < len; i++) {
-                const string name = BSONObjBuilder::numStr(i);
+	      const std::string name = BSONObjBuilder::numStr(i);
                 v8ToMongoElement(arrBuilder, name, array->Get(i), depth+1, originalParent);
             }
             return;
@@ -1904,7 +1904,7 @@ namespace mongo {
 
         if (haveError) {
             if (reportError)
-                error() << _error << endl;
+	      error() << _error << std::endl;
             if (assertOnError)
                 uasserted(16722, _error);
             return true;
