@@ -32,6 +32,8 @@
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #include <v8.h>
+#include <set>
+#include <string>
 #include <vector>
 #include <set>
 #include <map>
@@ -97,6 +99,7 @@ namespace mongo {
          * V8Scope is destructed.
          */
         ~ObjTracker() {
+
 	  typename std::set<TrackedPtr*>::iterator it = _container.begin();
             while (it != _container.end()) {
                 delete *it;
@@ -135,6 +138,7 @@ namespace mongo {
         }
 
         // container for all TrackedPtrs created by this ObjTracker instance
+
 	std::set<TrackedPtr*> _container;
     };
 
@@ -596,6 +600,7 @@ namespace mongo {
         const BSONObj _obj;
         bool _modified;
         const bool _readOnly;
+
 	std::set<std::string> _removed;
     };
 

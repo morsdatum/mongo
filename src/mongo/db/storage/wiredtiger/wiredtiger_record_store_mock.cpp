@@ -1,9 +1,12 @@
+// wiredtiger_record_store_mock.cpp
+
 /**
  *    Copyright (C) 2014 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
  *    as published by the Free Software Foundation.
+ *
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -26,36 +29,14 @@
  *    it in the license file.
  */
 
-#pragma once
+#include "mongo/platform/basic.h"
 
-#include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 
 namespace mongo {
 
-    class OperationContext;
+    BackgroundJob* WiredTigerRecordStore::_startBackgroundThread() {
+        return NULL;
+    }
 
-    class RecoveryUnitNoop : public RecoveryUnit {
-    public:
-        // TODO implement rollback
-        virtual void beginUnitOfWork(OperationContext* opCtx) {}
-        virtual void commitUnitOfWork() {}
-        virtual void endUnitOfWork() {}
-
-        virtual void commitAndRestart() {}
-
-        virtual bool awaitCommit() {
-            return true;
-        }
-
-        virtual void registerChange(Change* change) {
-            change->commit();
-            delete change;
-        }
-
-        virtual void* writingPtr(void* data, size_t len) {
-            return data;
-        }
-        virtual void setRollbackWritesDisabled() {}
-    };
-
-}  // namespace mongo
+}

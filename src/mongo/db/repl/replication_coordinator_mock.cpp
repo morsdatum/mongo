@@ -132,6 +132,8 @@ namespace repl {
 
     void ReplicationCoordinatorMock::setMyLastOptime(const OpTime& ts) {}
 
+    void ReplicationCoordinatorMock::resetMyLastOptime() {}
+
     OpTime ReplicationCoordinatorMock::getMyLastOptime() const {
         // TODO
         return OpTime();
@@ -163,8 +165,10 @@ namespace repl {
 
     void ReplicationCoordinatorMock::signalUpstreamUpdater() {}
 
-    void ReplicationCoordinatorMock::prepareReplSetUpdatePositionCommand(
-            BSONObjBuilder* cmdBuilder) {}
+    bool ReplicationCoordinatorMock::prepareReplSetUpdatePositionCommand(
+            BSONObjBuilder* cmdBuilder) {
+        return true;
+    }
 
     void ReplicationCoordinatorMock::prepareReplSetUpdatePositionCommandHandshakes(
             std::vector<BSONObj>* handshakes) {}

@@ -82,8 +82,7 @@ namespace {
         LOG(2) << "IndexBuilder building index " << _index;
 
         OperationContextImpl txn;
-
-        Lock::ParallelBatchWriterMode::iAmABatchParticipant(txn.lockState());
+        txn.lockState()->setIsBatchWriter(true);
 
         txn.getClient()->getAuthorizationSession()->grantInternalAuthorization();
 
@@ -198,9 +197,9 @@ namespace {
 
                 if (allowBackgroundBuilding) {
                     dbLock->relockWithMode(MODE_X);
-                    Database* db = dbHolder().get(txn, ns.db());
-                    fassert(28553, db);
-                    fassert(28554, db->getCollection(ns.ns()));
+                    Database* reloadDb = dbHolder().get(txn, ns.db());
+                    fassert(28553, reloadDb);
+                    fassert(28554, reloadDb->getCollection(ns.ns()));
                     indexer.unregisterIndexBuild(descriptor);
                 }
 

@@ -146,9 +146,10 @@ namespace {
                                                                   const IndexDescriptor& desc) {
         str::stream ss;
 
-        // Separate out a prefix and suffix in the default string. User configuration will
-        // override values in the prefix, but not values in the suffix.
-        ss << "type=file,leaf_page_max=16k,";
+        // Separate out a prefix and suffix in the default string. User configuration will override
+        // values in the prefix, but not values in the suffix.  Page sizes are chosen so that index
+        // keys (up to 1024 bytes) will not overflow.
+        ss << "type=file,internal_page_max=16k,leaf_page_max=16k,";
         if (wiredTigerGlobalOptions.useIndexPrefixCompression) {
             ss << "prefix_compression=true,";
         }
@@ -192,7 +193,7 @@ namespace {
     int WiredTigerIndex::Create(OperationContext* txn,
                                 const std::string& uri,
                                 const std::string& config) {
-        WT_SESSION* s = WiredTigerRecoveryUnit::get( txn )->getSession()->getSession();
+        WT_SESSION* s = WiredTigerRecoveryUnit::get( txn )->getSession(txn)->getSession();
         LOG(1) << "create uri: " << uri << " config: " << config;
         return s->create(s, uri.c_str(), config.c_str());
     }
@@ -300,7 +301,7 @@ namespace {
             output->append("type", type);
         }
 
-        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession();
+        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession(txn);
         WT_SESSION* s = session->getSession();
         Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + uri(),
                                                           "statistics=(fast)", output);
@@ -339,7 +340,7 @@ namespace {
     }
 
     long long WiredTigerIndex::getSpaceUsedBytes( OperationContext* txn ) const {
-        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession();
+        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession(txn);
         return static_cast<long long>( WiredTigerUtil::getIdentSize( session->getSession(),
                                                                      _uri ) );
     }
@@ -398,7 +399,7 @@ namespace {
         WT_CURSOR* openBulkCursor(WiredTigerIndex* idx) {
             // Open cursors can cause bulk open_cursor to fail with EBUSY.
             // TODO any other cases that could cause EBUSY?
-            WiredTigerSession* outerSession = WiredTigerRecoveryUnit::get(_txn)->getSession();
+            WiredTigerSession* outerSession = WiredTigerRecoveryUnit::get(_txn)->getSession(_txn);
             outerSession->closeAllCursors();
 
             // Not using cursor cache since we need to set "bulk".
@@ -661,7 +662,7 @@ namespace {
 
             if ( !wt_keeptxnopen() && !_eof ) {
                 // Ensure an active session exists, so any restored cursors will bind to it
-                WiredTigerRecoveryUnit::get(txn)->getSession();
+                WiredTigerRecoveryUnit::get(txn)->getSession(txn);
 
                 _locate(_savedLoc);
             }
@@ -1007,13 +1008,7 @@ namespace {
         c->set_value( c, valueItem.Get() );
         int ret = WT_OP_CHECK(c->insert(c));
 
-        if ( ret == WT_ROLLBACK && !dupsAllowed ) {
-            // if there is a conflict on a unique key, it means there is a dup key
-            // even if someone else is deleting at the same time, its ok to fail this
-            // insert as a dup key as it a race
-            return dupKeyError(key);
-        }
-        else if ( ret != WT_DUPLICATE_KEY ) {
+        if ( ret != WT_DUPLICATE_KEY ) {
             return wtRCToStatus( ret );
         }
 

@@ -686,6 +686,11 @@ namespace {
         _setMyLastOptime_inlock(&lock, ts, false);
     }
 
+    void ReplicationCoordinatorImpl::resetMyLastOptime() {
+        boost::unique_lock<boost::mutex> lock(_mutex);
+        _setMyLastOptime_inlock(&lock, OpTime(), true);
+    }
+
     void ReplicationCoordinatorImpl::_setMyLastOptime_inlock(
             boost::unique_lock<boost::mutex>* lock, const OpTime& ts, bool isRollbackAllowed) {
         invariant(lock->owns_lock());
@@ -1313,10 +1318,14 @@ namespace {
         return self.getId();
     }
 
-    void ReplicationCoordinatorImpl::prepareReplSetUpdatePositionCommand(
+    bool ReplicationCoordinatorImpl::prepareReplSetUpdatePositionCommand(
             BSONObjBuilder* cmdBuilder) {
         boost::lock_guard<boost::mutex> lock(_mutex);
         invariant(_rsConfig.isInitialized());
+        // do not send updates if we have been removed from the config
+        if (_selfIndex == -1) {
+            return false;
+        }
         cmdBuilder->append("replSetUpdatePosition", 1);
         // create an array containing objects each member connected to us and for ourself
         BSONArrayBuilder arrayBuilder(cmdBuilder->subarrayStart("optimes"));
@@ -1341,6 +1350,7 @@ namespace {
                 entry.append("config", member->toBSON(_rsConfig.getTagConfig()));
             }
         }
+        return true;
     }
 
     void ReplicationCoordinatorImpl::prepareReplSetUpdatePositionCommandHandshakes(

@@ -140,13 +140,6 @@ namespace {
 
 
     /**
-     * Returns whether the passed in mode is S or IS. Used for validation checks.
-     */
-    bool isSharedMode(LockMode mode) {
-        return (mode == MODE_IS || mode == MODE_S);
-    }
-
-    /**
      * Whether the particular lock's release should be held until the end of the operation. We
      * delay release of exclusive locks (locks that are for write operations) in order to ensure
      * that the data they protect is committed successfully.
@@ -229,7 +222,7 @@ namespace {
         _lock.lock();
         LockRequestsMap::ConstIterator it = _requests.begin();
         while (!it.finished()) {
-            ss << " " << it.key().toString();
+            ss << " " << it.key().toString() << " held in " << modeName(it->mode);
             it.next();
         }
         _lock.unlock();
@@ -459,7 +452,7 @@ namespace {
         invariant(nsIsDbOnly(dbName));
 
         if (isW()) return true;
-        if (isR() && isSharedMode(mode)) return true;
+        if (isR() && isSharedLockMode(mode)) return true;
 
         const ResourceId resIdDb(RESOURCE_DATABASE, dbName);
         return isLockHeldForMode(resIdDb, mode);
@@ -471,7 +464,7 @@ namespace {
         invariant(nsIsFull(ns));
 
         if (isW()) return true;
-        if (isR() && isSharedMode(mode)) return true;
+        if (isR() && isSharedLockMode(mode)) return true;
 
         const NamespaceString nss(ns);
         const ResourceId resIdDb(RESOURCE_DATABASE, nss.db());
@@ -481,7 +474,7 @@ namespace {
         switch (dbMode) {
         case MODE_NONE: return false;
         case MODE_X: return true;
-        case MODE_S: return isSharedMode(mode);
+        case MODE_S: return isSharedLockMode(mode);
         case MODE_IX:
         case MODE_IS:
             {
@@ -728,7 +721,6 @@ namespace {
 
             // If infinite timeout was requested, just keep waiting
             if (timeoutMs == UINT_MAX) {
-                markThreadIdle();
                 continue;
             }
 
@@ -739,9 +731,6 @@ namespace {
             if (waitTimeMs == 0) {
                 break;
             }
-
-            // We have waited for a while and may likely be waiting even longer, mark us as idle
-            markThreadIdle();
         }
 
         // Cleanup the state, since this is an unused lock now
@@ -795,6 +784,23 @@ namespace {
             invariant(false);
             return MODE_NONE;
         }
+    }
+
+    template<bool IsForMMAPV1>
+    bool LockerImpl<IsForMMAPV1>::hasStrongLocks() const {
+        if (!isLocked()) return false;
+
+        boost::lock_guard<SpinLock> lk(_lock);
+        LockRequestsMap::ConstIterator it = _requests.begin();
+        while (!it.finished()) {
+            if (it->mode == MODE_X || it->mode == MODE_S) {
+                return true;
+            }
+
+            it.next();
+        }
+
+        return false;
     }
 
 

@@ -258,6 +258,11 @@ namespace repl {
         virtual void setMyLastOptime(const OpTime& ts) = 0;
 
         /**
+         * Same as above, but used during places we need to zero our last optime.
+         */
+        virtual void resetMyLastOptime() = 0;
+
+        /**
          * Updates our the message we include in heartbeat responses.
          */
         virtual void setMyHeartbeatMessage(const std::string& msg) = 0;
@@ -327,8 +332,10 @@ namespace repl {
         /**
          * Prepares a BSONObj describing an invocation of the replSetUpdatePosition command that can
          * be sent to this node's sync source to update it about our progress in replication.
+         *
+         * The returned bool indicates whether or not the command was created.
          */
-        virtual void prepareReplSetUpdatePositionCommand(BSONObjBuilder* cmdBuilder) = 0;
+        virtual bool prepareReplSetUpdatePositionCommand(BSONObjBuilder* cmdBuilder) = 0;
 
         /**
          * For ourself and each secondary chaining off of us, adds a BSONObj to "handshakes"

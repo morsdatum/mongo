@@ -95,6 +95,8 @@ namespace repl {
 
         virtual void setMyLastOptime(const OpTime& ts);
 
+        virtual void resetMyLastOptime();
+
         virtual void setMyHeartbeatMessage(const std::string& msg);
 
         virtual OpTime getMyLastOptime() const;
@@ -113,7 +115,7 @@ namespace repl {
 
         virtual void signalUpstreamUpdater();
 
-        virtual void prepareReplSetUpdatePositionCommand(BSONObjBuilder* cmdBuilder);
+        virtual bool prepareReplSetUpdatePositionCommand(BSONObjBuilder* cmdBuilder);
 
         virtual void prepareReplSetUpdatePositionCommandHandshakes(
                 std::vector<BSONObj>* handshakes);
