@@ -39,6 +39,7 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/mutex.hpp>
 
+#include <rocksdb/cache.h>
 #include <rocksdb/status.h>
 
 #include "mongo/base/disallow_copying.h"
@@ -121,11 +122,6 @@ namespace mongo {
         rocksdb::DB* getDB() { return _db.get(); }
         const rocksdb::DB* getDB() const { return _db.get(); }
 
-        /**
-         * Returns a ReadOptions object that uses the snapshot contained in opCtx
-         */
-        static rocksdb::ReadOptions readOptionsWithSnapshot( OperationContext* opCtx );
-
     private:
         bool _existsColumnFamily(const StringData& ident);
         Status _createColumnFamily(const rocksdb::ColumnFamilyOptions& options,
@@ -137,15 +133,16 @@ namespace mongo {
         std::set<std::string> _loadCollections(rocksdb::Iterator* itr);
         std::vector<std::string> _loadColumnFamilies();
 
-        rocksdb::ColumnFamilyOptions _collectionOptions() const;
-        rocksdb::ColumnFamilyOptions _indexOptions(const Ordering& order) const;
+        rocksdb::ColumnFamilyOptions _collectionOptions();
+        rocksdb::ColumnFamilyOptions _indexOptions(const Ordering& order);
 
-        rocksdb::Options _dbOptions() const;
+        rocksdb::Options _dbOptions();
 
-        static rocksdb::ColumnFamilyOptions _defaultCFOptions();
+        rocksdb::ColumnFamilyOptions _defaultCFOptions();
 
         std::string _path;
         boost::scoped_ptr<rocksdb::DB> _db;
+        std::shared_ptr<rocksdb::Cache> _block_cache;
 
         const bool _durable;
 

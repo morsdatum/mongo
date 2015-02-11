@@ -83,8 +83,11 @@ namespace mongo {
             BSONElement filterElt = jsobj["filter"];
             if (!filterElt.eoo()) {
                 if (filterElt.type() != mongo::Object) {
-                    return appendCommandStatus(result, Status(ErrorCodes::BadValue,
-                                                              "\"filter\" must be an object"));
+                    return appendCommandStatus(
+                            result,
+                            Status(ErrorCodes::TypeMismatch,
+                                   str::stream() << "\"filter\" must be of type Object, not " <<
+                                   typeName(filterElt.type())));
                 }
                 StatusWithMatchExpression statusWithMatcher =
                     MatchExpressionParser::parse(filterElt.Obj());
@@ -146,7 +149,7 @@ namespace mongo {
                 member->state = WorkingSetMember::OWNED_OBJ;
                 member->keyData.clear();
                 member->loc = RecordId();
-                member->obj = maybe;
+                member->obj = Snapshotted<BSONObj>(SnapshotId(), maybe);
                 root->pushBack(*member);
             }
 

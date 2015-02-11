@@ -686,6 +686,45 @@ namespace {
         }
     }
 
+    TEST(WiredTigerRecordStoreTest, CappedCursorRollover) {
+        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 5));
+
+        { // first insert 3 documents
+            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            for ( int i = 0; i < 3; ++i ) {
+                WriteUnitOfWork uow( opCtx.get() );
+                StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
+                ASSERT_OK( res.getStatus() );
+                uow.commit();
+            }
+        }
+
+        // set up our cursor that should rollover
+        scoped_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
+        scoped_ptr<RecordIterator> it;
+        it.reset( rs->getIterator(cursorCtx.get()) );
+        ASSERT_FALSE(it->isEOF());
+        it->getNext();
+        ASSERT_FALSE(it->isEOF());
+        it->saveState();
+        cursorCtx->recoveryUnit()->commitAndRestart();
+
+        { // insert 100 documents which causes rollover
+            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            for ( int i = 0; i < 100; i++ ) {
+                WriteUnitOfWork uow( opCtx.get() );
+                StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
+                ASSERT_OK( res.getStatus() );
+                uow.commit();
+            }
+        }
+
+        // cursor should now be dead
+        ASSERT_FALSE(it->restoreState(cursorCtx.get()));
+        ASSERT_TRUE(it->isEOF());
+    }
+
     RecordId _oplogOrderInsertOplog( OperationContext* txn,
                                     scoped_ptr<RecordStore>& rs,
                                     int inc ) {
@@ -803,5 +842,31 @@ namespace {
         ASSERT_EQUALS(creationStringElement.type(), String);
     }
 
+    TEST(WiredTigerRecordStoreTest, CappedCursorYieldFirst) {
+        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 50));
+
+        RecordId loc1;
+
+        { // first insert a document
+            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            WriteUnitOfWork uow( opCtx.get() );
+            StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
+            ASSERT_OK( res.getStatus() );
+            loc1 = res.getValue();
+            uow.commit();
+        }
+
+        scoped_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
+        scoped_ptr<RecordIterator> it( rs->getIterator(cursorCtx.get()) );
+        ASSERT_FALSE(it->isEOF());
+
+        // See that things work if you yield before you first call getNext().
+        it->saveState();
+        cursorCtx->recoveryUnit()->commitAndRestart();
+        ASSERT_TRUE(it->restoreState(cursorCtx.get()));
+        ASSERT_EQ(loc1, it->getNext());
+        ASSERT_TRUE(it->isEOF());
+    }
 
 }  // namespace mongo

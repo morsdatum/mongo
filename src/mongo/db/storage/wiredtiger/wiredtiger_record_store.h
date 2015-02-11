@@ -51,7 +51,6 @@
 
 namespace mongo {
 
-    class BackgroundJob;
     class RecoveryUnit;
     class WiredTigerCursor;
     class WiredTigerRecoveryUnit;
@@ -210,7 +209,7 @@ namespace mongo {
         int64_t cappedDeleteAsNeeded_inlock(OperationContext* txn,
                                             const RecordId& justInserted);
 
-        boost::mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
+        boost::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
     private:
 
         class Iterator : public RecordIterator {
@@ -258,8 +257,6 @@ namespace mongo {
         static int64_t _makeKey(const RecordId &loc);
         static RecordId _fromKey(int64_t k);
 
-        BackgroundJob* _startBackgroundThread();
-
         void _addUncommitedDiskLoc_inlock( OperationContext* txn, const RecordId& loc );
 
         RecordId _nextId();
@@ -282,7 +279,7 @@ namespace mongo {
         const int64_t _cappedMaxDocs;
         CappedDocumentDeleteCallback* _cappedDeleteCallback;
         int _cappedDeleteCheckCount; // see comment in ::cappedDeleteAsNeeded
-        mutable boost::mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
+        mutable boost::timed_mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
 
         const bool _useOplogHack;
 
@@ -300,7 +297,7 @@ namespace mongo {
         int _sizeStorerCounter;
 
         bool _shuttingDown;
-        boost::scoped_ptr<BackgroundJob> _backgroundThread;
+        bool _hasBackgroundThread;
     };
 
     // WT failpoint to throw write conflict exceptions randomly

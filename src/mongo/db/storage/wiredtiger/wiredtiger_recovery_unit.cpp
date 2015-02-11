@@ -84,7 +84,7 @@ namespace mongo {
         _session( NULL ),
         _depth(0),
         _active( false ),
-        _myTransactionCount( 0 ),
+        _myTransactionCount( 1 ),
         _everStartedWrite( false ),
         _currentlySquirreled( false ),
         _syncing( false ),
@@ -300,8 +300,9 @@ namespace mongo {
         _ticket.reset(NULL);
     }
 
-    uint64_t WiredTigerRecoveryUnit::getMyTransactionCount() const {
-        return _myTransactionCount;
+    SnapshotId WiredTigerRecoveryUnit::getSnapshotId() const {
+        // TODO: use actual wiredtiger txn id
+        return SnapshotId(_myTransactionCount);
     }
 
     void WiredTigerRecoveryUnit::markNoTicketRequired() {

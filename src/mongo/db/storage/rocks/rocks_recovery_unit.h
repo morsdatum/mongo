@@ -65,7 +65,7 @@ namespace mongo {
         RocksRecoveryUnit(RocksTransactionEngine* transactionEngine, rocksdb::DB* db, bool durable);
         virtual ~RocksRecoveryUnit();
 
-        virtual void beginUnitOfWork();
+        virtual void beginUnitOfWork(OperationContext* opCtx);
         virtual void commitUnitOfWork();
 
         virtual void endUnitOfWork();
@@ -79,6 +79,8 @@ namespace mongo {
         virtual void registerChange(Change* change);
 
         virtual void setRollbackWritesDisabled() {}
+
+        virtual SnapshotId getSnapshotId() const;
 
         // local api
 
@@ -141,6 +143,7 @@ namespace mongo {
         Changes _changes;
 
         int _depth;
+        uint64_t _myTransactionCount;
 
         RecordId _oplogReadTill;
     };

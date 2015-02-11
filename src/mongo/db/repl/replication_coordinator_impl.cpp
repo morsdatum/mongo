@@ -1910,6 +1910,9 @@ namespace {
         const MemberState newState = _topCoord->getMemberState();
         if (newState == _memberState) {
             if (_topCoord->getRole() == TopologyCoordinator::Role::candidate) {
+                invariant(_rsConfig.getNumMembers() == 1 &&
+                          _selfIndex == 0 &&
+                          _rsConfig.getMemberAt(0).isElectable());
                 return kActionWinElection;
             }
             return kActionNone;
@@ -1942,6 +1945,9 @@ namespace {
             // When transitioning to SECONDARY, the only way for _topCoord to report the candidate
             // role is if the configuration represents a single-node replica set.  In that case, the
             // overriding requirement is to elect this singleton node primary.
+            invariant(_rsConfig.getNumMembers() == 1 &&
+                      _selfIndex == 0 &&
+                      _rsConfig.getMemberAt(0).isElectable());
             result = kActionWinElection;
         }
 
@@ -2071,8 +2077,15 @@ namespace {
                  _replExecutor.now(),
                  myOptime);
          _rsConfig = newConfig;
-         log() << "new replica set config in use: " << _rsConfig.toBSON() << rsLog;
+         log() << "New replica set config in use: " << _rsConfig.toBSON() << rsLog;
          _selfIndex = myIndex;
+         if (_selfIndex >= 0) {
+             log() << "This node is " <<
+                 _rsConfig.getMemberAt(_selfIndex).getHostAndPort() << " in the config";
+         }
+         else {
+             log() << "This node is not a member of the config";
+         }
 
          const PostMemberStateUpdateAction action =
              _updateMemberStateFromTopologyCoordinator_inlock();
