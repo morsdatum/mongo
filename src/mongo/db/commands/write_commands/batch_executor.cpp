@@ -642,7 +642,10 @@ namespace mongo {
                        > ( serverGlobalParams.slowMS + currentOp->getExpectedLatencyMs() );
 
         if ( logAll || logSlow ) {
-            LOG(0) << currentOp->debug().report( *currentOp ) << endl;
+            Locker::LockerInfo lockerInfo;
+            txn->lockState()->getLockerInfo(&lockerInfo);
+
+            LOG(0) << currentOp->debug().report(*currentOp, lockerInfo.stats);
         }
 
         if (currentOp->shouldDBProfile(executionTime)) {
@@ -1221,6 +1224,11 @@ namespace mongo {
                 ScopedTransaction transaction(txn, MODE_IX);
                 Lock::DBLock lk(txn->lockState(), nsString.db(), MODE_X);
                 Client::Context ctx(txn, nsString.ns(), false /* don't check version */);
+
+                if (!checkIsMasterForDatabase(nsString, result)) {
+                    return;
+                }
+
                 Database* db = ctx.db();
                 if ( db->getCollection( nsString.ns() ) ) {
                     // someone else beat us to it
@@ -1239,8 +1247,12 @@ namespace mongo {
             Lock::DBLock dbLock(txn->lockState(), nsString.db(), MODE_IX);
             Lock::CollectionLock colLock(txn->lockState(),
                                          nsString.ns(),
-                                         MODE_IX);
+                                         parsedUpdate.isIsolated() ? MODE_X : MODE_IX);
             ///////////////////////////////////////////
+
+            if (!checkIsMasterForDatabase(nsString, result)) {
+                return;
+            }
 
             if (!checkShardVersion(txn, &shardingState, *updateItem.getRequest(), result))
                 return;
@@ -1376,8 +1388,14 @@ namespace mongo {
                     break;
                 }
 
-                Lock::CollectionLock collLock(txn->lockState(), nss.ns(), MODE_IX);
+                Lock::CollectionLock collLock(txn->lockState(),
+                                              nss.ns(),
+                                              parsedDelete.isIsolated() ? MODE_X : MODE_IX);
 
+                // getExecutorDelete() also checks if writes are allowed.
+                if (!checkIsMasterForDatabase(nss, result)) {
+                    return;
+                }
                 // Check version once we're locked
 
                 if (!checkShardVersion(txn, &shardingState, *removeItem.getRequest(), result)) {

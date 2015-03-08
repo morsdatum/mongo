@@ -95,6 +95,35 @@ struct __wt_named_extractor {
 } while (0)
 
 /*
+ * Macros to ensure the block is inserted or removed from both the
+ * main queue and the hashed queue.
+ */
+#define	WT_CONN_BLOCK_INSERT(conn, block, bucket) do {			\
+	SLIST_INSERT_HEAD(&(conn)->blocklh, block, l);			\
+	SLIST_INSERT_HEAD(&(conn)->blockhash[bucket], block, hashl);	\
+} while (0)
+
+#define	WT_CONN_BLOCK_REMOVE(conn, block, bucket) do {			\
+	SLIST_REMOVE(&(conn)->blocklh, block, __wt_block, l);		\
+	SLIST_REMOVE(							\
+	    &(conn)->blockhash[bucket], block, __wt_block, hashl);	\
+} while (0)
+
+/*
+ * Macros to ensure the file handle is inserted or removed from both the
+ * main queue and the hashed queue.
+ */
+#define	WT_CONN_FILE_INSERT(conn, fh, bucket) do {			\
+	SLIST_INSERT_HEAD(&(conn)->fhlh, fh, l);			\
+	SLIST_INSERT_HEAD(&(conn)->fhhash[bucket], fh, hashl);		\
+} while (0)
+
+#define	WT_CONN_FILE_REMOVE(conn, fh, bucket) do {			\
+	SLIST_REMOVE(&(conn)->fhlh, fh, __wt_fh, l);			\
+	SLIST_REMOVE(&(conn)->fhhash[bucket], fh, __wt_fh, hashl);	\
+} while (0)
+
+/*
  * WT_CONNECTION_IMPL --
  *	Implementation of WT_CONNECTION
  */
@@ -162,12 +191,14 @@ struct __wt_connection_impl {
 					/* Locked: LSM handle list. */
 	TAILQ_HEAD(__wt_lsm_qh, __wt_lsm_tree) lsmqh;
 					/* Locked: file list */
-	TAILQ_HEAD(__wt_fh_qh, __wt_fh) fhqh;
+	SLIST_HEAD(__wt_fhhash, __wt_fh) fhhash[WT_HASH_ARRAY_SIZE];
+	SLIST_HEAD(__wt_fh_lh, __wt_fh) fhlh;
 					/* Locked: library list */
 	TAILQ_HEAD(__wt_dlh_qh, __wt_dlh) dlhqh;
 
 	WT_SPINLOCK block_lock;		/* Locked: block manager list */
-	TAILQ_HEAD(__wt_block_qh, __wt_block) blockqh;
+	SLIST_HEAD(__wt_blockhash, __wt_block) blockhash[WT_HASH_ARRAY_SIZE];
+	SLIST_HEAD(__wt_block_lh, __wt_block) blocklh;
 
 	u_int open_btree_count;		/* Locked: open writable btree count */
 	uint32_t next_file_id;		/* Locked: file ID counter */
@@ -196,7 +227,6 @@ struct __wt_connection_impl {
 	uint32_t   hazard_max;		/* Hazard array size */
 
 	WT_CACHE  *cache;		/* Page cache */
-	int	   cache_overhead;	/* Cache percent adjustment */
 	uint64_t   cache_size;		/* Configured cache size */
 
 	WT_TXN_GLOBAL txn_global;	/* Global transaction state */
@@ -259,6 +289,7 @@ struct __wt_connection_impl {
 	wt_thread_t	 evict_tid;	/* Eviction server thread ID */
 	int		 evict_tid_set;	/* Eviction server thread ID set */
 
+	uint32_t	 evict_workers_alloc;/* Allocated eviction workers */
 	uint32_t	 evict_workers_max;/* Max eviction workers */
 	uint32_t	 evict_workers_min;/* Min eviction workers */
 	uint32_t	 evict_workers;	/* Number of eviction workers */
@@ -279,6 +310,7 @@ struct __wt_connection_impl {
 #define	WT_CONN_LOG_ENABLED	0x02	/* Logging is enabled */
 #define	WT_CONN_LOG_EXISTED	0x04	/* Log files found */
 #define	WT_CONN_LOG_PREALLOC	0x08	/* Pre-allocation is enabled */
+#define	WT_CONN_LOG_RECOVER_ERR	0x10	/* Error if recovery required */
 	uint32_t	 log_flags;	/* Global logging configuration */
 	WT_CONDVAR	*log_cond;	/* Log server wait mutex */
 	WT_SESSION_IMPL *log_session;	/* Log server session */

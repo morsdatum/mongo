@@ -203,6 +203,7 @@ static const WT_CONFIG_CHECK confchk_lsm_subconfigs[] = {
 	{ "bloom_config", "string", NULL, NULL },
 	{ "bloom_hash_count", "int", "min=2,max=100", NULL },
 	{ "bloom_oldest", "boolean", NULL, NULL },
+	{ "chunk_count_limit", "int", NULL, NULL },
 	{ "chunk_max", "int", "min=100MB,max=10TB", NULL },
 	{ "chunk_size", "int", "min=512K,max=500MB", NULL },
 	{ "merge_max", "int", "min=2,max=100", NULL },
@@ -298,6 +299,7 @@ static const WT_CONFIG_CHECK confchk_session_verify[] = {
 	{ "dump_blocks", "boolean", NULL, NULL },
 	{ "dump_offsets", "list", NULL, NULL },
 	{ "dump_pages", "boolean", NULL, NULL },
+	{ "dump_shape", "boolean", NULL, NULL },
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -317,6 +319,7 @@ static const WT_CONFIG_CHECK confchk_log_subconfigs[] = {
 	{ "file_max", "int", "min=100KB,max=2GB", NULL },
 	{ "path", "string", NULL, NULL },
 	{ "prealloc", "boolean", NULL, NULL },
+	{ "recover", "string", "choices=[\"error\",\"on\"]", NULL },
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -628,11 +631,12 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "internal_page_max=4KB,key_format=u,key_gap=10,leaf_item_max=0,"
 	  "leaf_key_max=0,leaf_page_max=32KB,leaf_value_max=0,"
 	  "lsm=(auto_throttle=,bloom=,bloom_bit_count=16,bloom_config=,"
-	  "bloom_hash_count=8,bloom_oldest=0,chunk_max=5GB,chunk_size=10MB,"
-	  "merge_max=15,merge_min=0),memory_page_max=5MB,"
-	  "os_cache_dirty_max=0,os_cache_max=0,prefix_compression=0,"
-	  "prefix_compression_min=4,source=,split_deepen_min_child=0,"
-	  "split_deepen_per_child=0,split_pct=75,type=file,value_format=u",
+	  "bloom_hash_count=8,bloom_oldest=0,chunk_count_limit=0,"
+	  "chunk_max=5GB,chunk_size=10MB,merge_max=15,merge_min=0),"
+	  "memory_page_max=5MB,os_cache_dirty_max=0,os_cache_max=0,"
+	  "prefix_compression=0,prefix_compression_min=4,source=,"
+	  "split_deepen_min_child=0,split_deepen_per_child=0,split_pct=75,"
+	  "type=file,value_format=u",
 	  confchk_session_create
 	},
 	{ "session.drop",
@@ -664,6 +668,10 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "force=0",
 	  confchk_session_salvage
 	},
+	{ "session.strerror",
+	  "",
+	  NULL
+	},
 	{ "session.truncate",
 	  "",
 	  NULL
@@ -673,7 +681,8 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  NULL
 	},
 	{ "session.verify",
-	  "dump_address=0,dump_blocks=0,dump_offsets=,dump_pages=0",
+	  "dump_address=0,dump_blocks=0,dump_offsets=,dump_pages=0,"
+	  "dump_shape=0",
 	  confchk_session_verify
 	},
 	{ "table.meta",
@@ -688,7 +697,7 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "eviction=(threads_max=1,threads_min=1),eviction_dirty_target=80,"
 	  "eviction_target=80,eviction_trigger=95,exclusive=0,extensions=,"
 	  "file_extend=,hazard_max=1000,log=(archive=,compressor=,enabled=0"
-	  ",file_max=100MB,path=,prealloc=),lsm_manager=(merge=,"
+	  ",file_max=100MB,path=,prealloc=,recover=on),lsm_manager=(merge=,"
 	  "worker_thread_max=4),lsm_merge=,mmap=,multiprocess=0,"
 	  "session_max=100,session_scratch_max=2MB,shared_cache=(chunk=10MB"
 	  ",name=,reserve=0,size=500MB),statistics=none,"
@@ -706,7 +715,7 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "eviction=(threads_max=1,threads_min=1),eviction_dirty_target=80,"
 	  "eviction_target=80,eviction_trigger=95,exclusive=0,extensions=,"
 	  "file_extend=,hazard_max=1000,log=(archive=,compressor=,enabled=0"
-	  ",file_max=100MB,path=,prealloc=),lsm_manager=(merge=,"
+	  ",file_max=100MB,path=,prealloc=,recover=on),lsm_manager=(merge=,"
 	  "worker_thread_max=4),lsm_merge=,mmap=,multiprocess=0,"
 	  "session_max=100,session_scratch_max=2MB,shared_cache=(chunk=10MB"
 	  ",name=,reserve=0,size=500MB),statistics=none,"
@@ -723,8 +732,8 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "direct_io=,error_prefix=,eviction=(threads_max=1,threads_min=1),"
 	  "eviction_dirty_target=80,eviction_target=80,eviction_trigger=95,"
 	  "extensions=,file_extend=,hazard_max=1000,log=(archive=,"
-	  "compressor=,enabled=0,file_max=100MB,path=,prealloc=),"
-	  "lsm_manager=(merge=,worker_thread_max=4),lsm_merge=,mmap=,"
+	  "compressor=,enabled=0,file_max=100MB,path=,prealloc=,recover=on)"
+	  ",lsm_manager=(merge=,worker_thread_max=4),lsm_merge=,mmap=,"
 	  "multiprocess=0,session_max=100,session_scratch_max=2MB,"
 	  "shared_cache=(chunk=10MB,name=,reserve=0,size=500MB),"
 	  "statistics=none,statistics_log=(on_close=0,"
@@ -740,8 +749,8 @@ static const WT_CONFIG_ENTRY config_entries[] = {
 	  "direct_io=,error_prefix=,eviction=(threads_max=1,threads_min=1),"
 	  "eviction_dirty_target=80,eviction_target=80,eviction_trigger=95,"
 	  "extensions=,file_extend=,hazard_max=1000,log=(archive=,"
-	  "compressor=,enabled=0,file_max=100MB,path=,prealloc=),"
-	  "lsm_manager=(merge=,worker_thread_max=4),lsm_merge=,mmap=,"
+	  "compressor=,enabled=0,file_max=100MB,path=,prealloc=,recover=on)"
+	  ",lsm_manager=(merge=,worker_thread_max=4),lsm_merge=,mmap=,"
 	  "multiprocess=0,session_max=100,session_scratch_max=2MB,"
 	  "shared_cache=(chunk=10MB,name=,reserve=0,size=500MB),"
 	  "statistics=none,statistics_log=(on_close=0,"

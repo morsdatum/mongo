@@ -606,6 +606,11 @@ namespace mongo {
                 ScopedTransaction transaction(txn, MODE_IX);
                 Lock::DBLock dbXLock(txn->lockState(), dbname, MODE_X);
                 Client::Context ctx(txn, ns);
+                if (!fromRepl &&
+                    !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(dbname)) {
+                    return appendCommandStatus(result, Status(ErrorCodes::NotMaster, str::stream()
+                        << "Not primary while creating collection " << ns));
+                }
 
                 WriteUnitOfWork wunit(txn);
 
@@ -680,13 +685,13 @@ namespace mongo {
             BSONObj query = BSON( "files_id" << jsobj["filemd5"] << "n" << GTE << n );
             BSONObj sort = BSON( "files_id" << 1 << "n" << 1 );
 
-            CanonicalQuery* cq;
-            if (!CanonicalQuery::canonicalize(ns, query, sort, BSONObj(), &cq).isOK()) {
-                uasserted(17240, "Can't canonicalize query " + query.toString());
-                return 0;
-            }
-
             MONGO_WRITE_CONFLICT_RETRY_LOOP_BEGIN {
+                CanonicalQuery* cq;
+                if (!CanonicalQuery::canonicalize(ns, query, sort, BSONObj(), &cq).isOK()) {
+                    uasserted(17240, "Can't canonicalize query " + query.toString());
+                    return 0;
+                }
+
                 // Check shard version at startup.
                 // This will throw before we've done any work if shard version is outdated
                 // We drop and re-acquire these locks every document because md5'ing is expensive
@@ -1121,17 +1126,39 @@ namespace mongo {
                     }
                 }
                 else {
-                    Status s = coll->getRecordStore()->setCustomOption( txn, e, &result );
-                    if ( s.isOK() ) {
-                        // no-op
-                    }
-                    else if ( s.code() == ErrorCodes::InvalidOptions ) {
-                        errmsg = str::stream() << "unknown option to collMod: " << e.fieldName();
+                    // As of SERVER-17312 we only support these two options. When SERVER-17320 is
+                    // resolved this will need to be enhanced to handle other options.
+                    typedef CollectionOptions CO;
+                    const StringData name = e.fieldNameStringData();
+                    const int flag = (name == "usePowerOf2Sizes") ? CO::Flag_UsePowerOf2Sizes :
+                                     (name == "noPadding") ? CO::Flag_NoPadding :
+                                     0;
+                    if (!flag) {
+                        errmsg = str::stream() << "unknown option to collMod: " << name;
                         ok = false;
+                        continue;
                     }
-                    else {
-                        return appendCommandStatus( result, s );
-                    }
+
+                    CollectionCatalogEntry* cce = coll->getCatalogEntry();
+
+                    const int oldFlags = cce->getCollectionOptions(txn).flags;
+                    const bool oldSetting = oldFlags & flag;
+                    const bool newSetting = e.trueValue();
+
+                    result.appendBool( name.toString() + "_old", oldSetting );
+                    result.appendBool( name.toString() + "_new", newSetting );
+
+                    const int newFlags = newSetting
+                                       ? (oldFlags | flag) // set flag
+                                       : (oldFlags & ~flag); // clear flag
+
+                    // NOTE we do this unconditionally to ensure that we note that the user has
+                    // explicitly set flags, even if they are just setting the default.
+                    cce->updateFlags(txn, newFlags);
+
+                    const CollectionOptions newOptions = cce->getCollectionOptions(txn);
+                    invariant(newOptions.flags == newFlags);
+                    invariant(newOptions.flagsSet);
                 }
             }
 

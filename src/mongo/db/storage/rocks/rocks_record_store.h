@@ -44,7 +44,6 @@
 #include "mongo/platform/atomic_word.h"
 
 namespace rocksdb {
-    class ColumnFamilyHandle;
     class DB;
     class Iterator;
     class Slice;
@@ -79,13 +78,12 @@ namespace mongo {
 
     class RocksRecordStore : public RecordStore {
     public:
-        RocksRecordStore(const StringData& ns, const StringData& id, rocksdb::DB* db,
-                         boost::shared_ptr<rocksdb::ColumnFamilyHandle> columnFamily,
+        RocksRecordStore(const StringData& ns, const StringData& id, rocksdb::DB* db, std::string prefix,
                          bool isCapped = false, int64_t cappedMaxSize = -1,
                          int64_t cappedMaxDocs = -1,
                          CappedDocumentDeleteCallback* cappedDeleteCallback = NULL);
 
-        virtual ~RocksRecordStore() { }
+        virtual ~RocksRecordStore();
 
         // name of the RecordStore implementation
         virtual const char* name() const { return "rocks"; }
@@ -160,10 +158,6 @@ namespace mongo {
                                         BSONObjBuilder* result,
                                         double scale ) const;
 
-        virtual Status setCustomOption( OperationContext* txn,
-                                        const BSONElement& option,
-                                        BSONObjBuilder* info = NULL );
-
         virtual void temp_cappedTruncateAfter(OperationContext* txn,
                                               RecordId end,
                                               bool inclusive);
@@ -186,6 +180,10 @@ namespace mongo {
         bool cappedMaxSize() const { invariant(_isCapped); return _cappedMaxSize; }
         bool isOplog() const { return _isOplog; }
 
+        int64_t cappedDeleteAsNeeded(OperationContext* txn, const RecordId& justInserted);
+        int64_t cappedDeleteAsNeeded_inlock(OperationContext* txn, const RecordId& justInserted);
+        boost::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
+
         static rocksdb::Comparator* newRocksCollectionComparator();
 
     private:
@@ -193,8 +191,7 @@ namespace mongo {
         // shared_ptrs
         class Iterator : public RecordIterator {
         public:
-            Iterator(OperationContext* txn, rocksdb::DB* db,
-                     boost::shared_ptr<rocksdb::ColumnFamilyHandle> columnFamily,
+            Iterator(OperationContext* txn, rocksdb::DB* db, std::string prefix,
                      boost::shared_ptr<CappedVisibilityManager> cappedVisibilityManager,
                      const CollectionScanParams::Direction& dir, const RecordId& start);
 
@@ -214,7 +211,7 @@ namespace mongo {
 
             OperationContext* _txn;
             rocksdb::DB* _db; // not owned
-            boost::shared_ptr<rocksdb::ColumnFamilyHandle> _cf;
+            std::string _prefix;
             boost::shared_ptr<CappedVisibilityManager> _cappedVisibilityManager;
             CollectionScanParams::Direction _dir;
             bool _eof;
@@ -232,29 +229,28 @@ namespace mongo {
 
         static RecordId _makeRecordId( const rocksdb::Slice& slice );
 
-        static RecordData _getDataFor(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf,
+        static RecordData _getDataFor(rocksdb::DB* db, const std::string& prefix,
                                       OperationContext* txn, const RecordId& loc);
 
         RecordId _nextId();
         bool cappedAndNeedDelete(long long dataSizeDelta, long long numRecordsDelta) const;
-        void cappedDeleteAsNeeded(OperationContext* txn, const RecordId& justInserted);
 
         // The use of this function requires that the passed in storage outlives the returned Slice
         static rocksdb::Slice _makeKey(const RecordId& loc, int64_t* storage);
+        static std::string _makePrefixedKey(const std::string& prefix, const RecordId& loc);
 
-        void _changeNumRecords(OperationContext* txn, bool insert);
-        void _increaseDataSize(OperationContext* txn, int amount);
-
-        std::string _getTransactionID(const RecordId& rid) const;
+        void _changeNumRecords(OperationContext* txn, int64_t amount);
+        void _increaseDataSize(OperationContext* txn, int64_t amount);
 
         rocksdb::DB* _db; // not owned
-        boost::shared_ptr<rocksdb::ColumnFamilyHandle> _columnFamily;
+        std::string _prefix;
 
         const bool _isCapped;
         const int64_t _cappedMaxSize;
+        const int64_t _cappedMaxSizeSlack;  // when to start applying backpressure
         const int64_t _cappedMaxDocs;
         CappedDocumentDeleteCallback* _cappedDeleteCallback;
-        boost::mutex _cappedDeleterMutex; // see commend in ::cappedDeleteAsNeeded
+        mutable boost::timed_mutex _cappedDeleterMutex;  // see comment in ::cappedDeleteAsNeeded
         int _cappedDeleteCheckCount;      // see comment in ::cappedDeleteAsNeeded
 
         const bool _isOplog;
@@ -269,5 +265,8 @@ namespace mongo {
 
         const std::string _dataSizeKey;
         const std::string _numRecordsKey;
+
+        bool _shuttingDown;
+        bool _hasBackgroundThread;
     };
 }

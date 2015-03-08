@@ -36,6 +36,47 @@ __wt_log_ckpt(WT_SESSION_IMPL *session, WT_LSN *ckp_lsn)
 }
 
 /*
+ * __wt_log_needs_recovery --
+ *	Return 0 if we encounter a clean shutdown and 1 if recovery
+ *	must be run in the given variable.
+ */
+int
+__wt_log_needs_recovery(WT_SESSION_IMPL *session, WT_LSN *ckp_lsn, int *rec)
+{
+	WT_CONNECTION_IMPL *conn;
+	WT_CURSOR *c;
+	WT_DECL_RET;
+	WT_LOG *log;
+
+	conn = S2C(session);
+	log = conn->log;
+
+	/*
+	 * Default is to run recovery always (regardless of whether this
+	 * connection has logging enabled).
+	 */
+	*rec = 1;
+	if (log == NULL)
+		return (0);
+
+	WT_RET(__wt_curlog_open(session, "log:", NULL, &c));
+	c->set_key(c, ckp_lsn->file, ckp_lsn->offset, 0);
+	WT_ERR(c->search(c));
+
+	/*
+	 * If the checkpoint LSN we're given is the last record, then recovery
+	 * is not needed.
+	 */
+	if ((ret = c->next(c)) == WT_NOTFOUND) {
+		*rec = 0;
+		ret = 0;
+	}
+
+err:	WT_TRET(c->close(c));
+	return (ret);
+}
+
+/*
  * __wt_log_written_reset --
  *	Interface to reset the amount of log written during this
  *	checkpoint period.  Called from the checkpoint code.
@@ -708,8 +749,13 @@ __wt_log_open(WT_SESSION_IMPL *session)
 	log->fileid = lastlog;
 	WT_ERR(__wt_verbose(session, WT_VERB_LOG,
 	    "log_open: first log %d last log %d", firstlog, lastlog));
-	log->first_lsn.file = firstlog;
-	log->first_lsn.offset = 0;
+	if (firstlog == UINT32_MAX) {
+		WT_ASSERT(session, logcount == 0);
+		WT_INIT_LSN(&log->first_lsn);
+	} else {
+		log->first_lsn.file = firstlog;
+		log->first_lsn.offset = 0;
+	}
 
 	/*
 	 * Start logging at the beginning of the next log file, no matter

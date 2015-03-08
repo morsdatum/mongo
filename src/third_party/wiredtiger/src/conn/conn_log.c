@@ -98,6 +98,9 @@ __logmgr_config(WT_SESSION_IMPL *session, const char **cfg, int *runp)
 		FLD_SET(conn->log_flags, WT_CONN_LOG_PREALLOC);
 		conn->log_prealloc = 1;
 	}
+	WT_RET(__wt_config_gets_def(session, cfg, "log.recover", 0, &cval));
+	if (cval.len != 0  && WT_STRING_MATCH("error", cval.str, cval.len))
+		FLD_SET(conn->log_flags, WT_CONN_LOG_RECOVER_ERR);
 
 	WT_RET(__logmgr_sync_cfg(session, cfg));
 	return (0);
@@ -332,7 +335,7 @@ __log_close_server(void *arg)
 		} else
 			/* Wait until the next event. */
 			WT_ERR(__wt_cond_wait(session,
-			    conn->log_close_cond, 10000));
+			    conn->log_close_cond, WT_MILLION));
 	}
 
 	if (0) {

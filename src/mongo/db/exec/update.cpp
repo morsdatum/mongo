@@ -423,8 +423,8 @@ namespace mongo {
             }
 
             return Status::OK();
-
         }
+
     } // namespace
 
     // static
@@ -519,6 +519,11 @@ namespace mongo {
             docWasModified = false;
         }
 
+        if (!docWasModified && request->shouldStoreResultDoc()) {
+            // The update is a no-op, so the result doc is the same as the old doc.
+            _specificStats.newObj = oldObj.value().getOwned();
+        }
+
         if (docWasModified) {
 
             // Verify that no immutable fields were changed and data is valid for storage.
@@ -602,6 +607,11 @@ namespace mongo {
 
             invariant(oldObj.snapshotId() == _txn->recoveryUnit()->getSnapshotId());
             wunit.commit();
+
+            if (request->shouldStoreResultDoc()) {
+                // We just committed a single update. Hold onto the resulting document.
+                _specificStats.newObj = newObj.getOwned();
+            }
         }
 
         // Only record doc modifications if they wrote (exclude no-ops). Explains get
@@ -611,14 +621,15 @@ namespace mongo {
         }
     }
 
-    void UpdateStage::doInsert() {
-        _specificStats.inserted = true;
-
-        const UpdateRequest* request = _params.request;
-        UpdateDriver* driver = _params.driver;
-        CanonicalQuery* cq = _params.canonicalQuery;
-        UpdateLifecycle* lifecycle = request->getLifecycle();
-
+    // static
+    Status UpdateStage::applyUpdateOpsForInsert(const CanonicalQuery* cq,
+                                                const BSONObj& query,
+                                                UpdateDriver* driver,
+                                                UpdateLifecycle* lifecycle,
+                                                mutablebson::Document* doc,
+                                                bool isInternalRequest,
+                                                UpdateStats* stats,
+                                                BSONObj* out) {
         // Since this is an insert (no docs found and upsert:true), we will be logging it
         // as an insert in the oplog. We don't need the driver's help to build the
         // oplog record, then. We also set the context of the update driver to the INSERT_CONTEXT.
@@ -626,63 +637,93 @@ namespace mongo {
         driver->setLogOp(false);
         driver->setContext(ModifierInterface::ExecInfo::INSERT_CONTEXT);
 
-        // Reset the document we will be writing to
-        _doc.reset();
-
-        // The original document we compare changes to - immutable paths must not change
-        BSONObj original;
-
-        bool isInternalRequest = request->isFromReplication() || request->isFromMigration();
-
         const vector<FieldRef*>* immutablePaths = NULL;
         if (!isInternalRequest && lifecycle)
             immutablePaths = lifecycle->getImmutableFields();
 
-        // Calling populateDocumentWithQueryFields will populate the '_doc' with fields from the
-        // query which creates the base of the update for the inserted doc (because upsert
-        // was true).
+        // The original document we compare changes to - immutable paths must not change
+        BSONObj original;
+
         if (cq) {
-            uassertStatusOK(driver->populateDocumentWithQueryFields(cq, immutablePaths, _doc));
+            Status status = driver->populateDocumentWithQueryFields(cq, immutablePaths, *doc);
+            if (!status.isOK()) {
+                return status;
+            }
+
             if (driver->isDocReplacement())
-                _specificStats.fastmodinsert = true;
-            original = _doc.getObject();
+                stats->fastmodinsert = true;
+            original = doc->getObject();
         }
         else {
-            fassert(17354, CanonicalQuery::isSimpleIdQuery(request->getQuery()));
-            BSONElement idElt = request->getQuery()[idFieldName];
+            fassert(17354, CanonicalQuery::isSimpleIdQuery(query));
+            BSONElement idElt = query[idFieldName];
             original = idElt.wrap();
-            fassert(17352, _doc.root().appendElement(idElt));
+            fassert(17352, doc->root().appendElement(idElt));
         }
 
-        // Apply the update modifications and then log the update as an insert manually.
-        Status status = driver->update(StringData(), &_doc);
-        if (!status.isOK()) {
-            uasserted(16836, status.reason());
+        // Apply the update modifications here.
+        Status updateStatus = driver->update(StringData(), doc);
+        if (!updateStatus.isOK()) {
+            return Status(updateStatus.code(), updateStatus.reason(), 16836);
         }
 
         // Ensure _id exists and is first
-        uassertStatusOK(ensureIdAndFirst(_doc));
+        Status idAndFirstStatus = ensureIdAndFirst(*doc);
+        if (!idAndFirstStatus.isOK()) {
+            return idAndFirstStatus;
+        }
 
         // Validate that the object replacement or modifiers resulted in a document
         // that contains all the immutable keys and can be stored if it isn't coming
         // from a migration or via replication.
-        if (!isInternalRequest){
+        if (!isInternalRequest) {
             FieldRefSet noFields;
             // This will only validate the modified fields if not a replacement.
-            uassertStatusOK(validate(original,
-                                     noFields,
-                                     _doc,
-                                     immutablePaths,
-                                     driver->modOptions()) );
+            Status validateStatus = validate(original,
+                                             noFields,
+                                             *doc,
+                                             immutablePaths,
+                                             driver->modOptions());
+            if (!validateStatus.isOK()) {
+                return validateStatus;
+            }
         }
 
-        // Insert the doc
-        BSONObj newObj = _doc.getObject();
-        uassert(17420,
-                str::stream() << "Document to upsert is larger than " << BSONObjMaxUserSize,
-                newObj.objsize() <= BSONObjMaxUserSize);
+        BSONObj newObj = doc->getObject();
+        if (newObj.objsize() > BSONObjMaxUserSize) {
+            return Status(ErrorCodes::InvalidBSON,
+                          str::stream() << "Document to upsert is larger than "
+                                        << BSONObjMaxUserSize,
+                          17420);
+        }
+
+        *out = newObj;
+        return Status::OK();
+    }
+
+    void UpdateStage::doInsert() {
+        _specificStats.inserted = true;
+
+        const UpdateRequest* request = _params.request;
+        bool isInternalRequest = request->isFromReplication() || request->isFromMigration();
+
+        // Reset the document we will be writing to.
+        _doc.reset();
+
+        BSONObj newObj;
+        uassertStatusOK(applyUpdateOpsForInsert(_params.canonicalQuery,
+                                                request->getQuery(),
+                                                _params.driver,
+                                                request->getLifecycle(),
+                                                &_doc,
+                                                isInternalRequest,
+                                                &_specificStats,
+                                                &newObj));
 
         _specificStats.objInserted = newObj;
+        if (request->shouldStoreResultDoc()) {
+            _specificStats.newObj = newObj;
+        }
 
         // If this is an explain, bail out now without doing the insert.
         if (request->isExplain()) {
@@ -792,8 +833,6 @@ namespace mongo {
                 return PlanStage::NEED_TIME;
             }
 
-            ++_specificStats.nMatched;
-
             // Save state before making changes
             _child->saveState();
             if (supportsDocLocking()) {
@@ -831,11 +870,14 @@ namespace mongo {
                     break;
                 }
                 catch ( const WriteConflictException& de ) {
-                    if ( !_params.request->isMulti() ) {
-                        // We don't handle this here as we handle at the top level.
+                    if (_txn->lockState()->inAWriteUnitOfWork()) {
+                        // If we're in an outer WriteUnitOfWork we're not allowed to refresh our
+                        // snapshot. In this case we just re-throw.
+                        // Note that multi updates in this case are safe because the outer
+                        // WriteUnitOfWork ensure that this entire update is in one
+                        // transaction.
                         throw;
                     }
-
                     _params.opDebug->writeConflicts++;
 
                     // This is ok because we re-check all docs and predicates if the snapshot
@@ -845,7 +887,7 @@ namespace mongo {
                     _txn->checkForInterrupt();
 
                     WriteConflictException::logAndBackoff( attempt,
-                                                           "multi-update",
+                                                           "update",
                                                            _collection->ns().ns() );
 
                     if ( attempt > 2 ) {
@@ -859,6 +901,9 @@ namespace mongo {
                     }
                 }
             }
+
+            // This should be after transformAndUpdate to make sure we actually updated this doc.
+            ++_specificStats.nMatched;
 
             // Restore state after modification
 
@@ -1005,7 +1050,8 @@ namespace mongo {
                             !updateStats->isDocReplacement /* $mod or obj replacement */,
                             opDebug->nModified /* number of modified docs, no no-ops */,
                             opDebug->nMatched /* # of docs matched/updated, even no-ops */,
-                            updateStats->objInserted);
+                            updateStats->objInserted,
+                            updateStats->newObj);
     };
 
 } // namespace mongo

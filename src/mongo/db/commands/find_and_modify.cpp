@@ -37,12 +37,14 @@
 #include "mongo/db/commands.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/dbhelpers.h"
+#include "mongo/db/exec/update.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/projection.h"
 #include "mongo/db/ops/delete.h"
 #include "mongo/db/ops/update.h"
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/query/get_executor.h"
+#include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/util/log.h"
 
@@ -112,34 +114,23 @@ namespace mongo {
             }
 
             bool ok = false;
-            int attempt = 0;
-            while ( 1 ) {
-                try {
-                    errmsg = "";
+            MONGO_WRITE_CONFLICT_RETRY_LOOP_BEGIN {
+                errmsg = "";
 
-                    // We can always retry because we only ever modify one document
-                    ok = runImpl(txn,
-                                 dbname,
-                                 ns,
-                                 query,
-                                 fields,
-                                 update,
-                                 sort,
-                                 upsert,
-                                 returnNew,
-                                 remove,
-                                 result,
-                                 errmsg);
-                    break;
-                }
-                catch (const WriteConflictException&) {
-                    txn->getCurOp()->debug().writeConflicts++;
-                    if ( attempt++ > 1 ) {
-                        log() << "got WriteConflictException on findAndModify for " << ns
-                              <<  " retrying attempt: " << attempt;
-                    }
-                }
-            }
+                // We can always retry because we only ever modify one document
+                ok = runImpl(txn,
+                             dbname,
+                             ns,
+                             query,
+                             fields,
+                             update,
+                             sort,
+                             upsert,
+                             returnNew,
+                             remove,
+                             result,
+                             errmsg);
+            } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "findAndModify", ns);
 
             if ( !ok && errmsg == "no-collection" ) {
                 // Take X lock so we can create collection, then re-run operation.
@@ -159,11 +150,13 @@ namespace mongo {
                     // but that's ok, we'll just do nothing and error out
                 }
                 else {
-                    WriteUnitOfWork wuow(txn);
-                    uassertStatusOK( userCreateNS( txn, db,
-                                                   ns, BSONObj(),
-                                                   !fromRepl ) );
-                    wuow.commit();
+                    MONGO_WRITE_CONFLICT_RETRY_LOOP_BEGIN {
+                        WriteUnitOfWork wuow(txn);
+                        uassertStatusOK( userCreateNS( txn, db,
+                                                       ns, BSONObj(),
+                                                       !fromRepl ) );
+                        wuow.commit();
+                    } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "findAndModify", ns);
                 }
 
                 errmsg = "";
@@ -386,17 +379,73 @@ namespace mongo {
             }
             else {
                 // update
-                if ( ! found && ! upsert ) {
-                    // didn't have it, and am not upserting
-                    _appendHelper(result, doc, found, fields, whereCallback);
+                if (!found) {
+                    if (!upsert) {
+                        // Didn't have it, and not upserting.
+                        _appendHelper(result, doc, found, fields, whereCallback);
+                    }
+                    else {
+                        // Do an insert.
+                        BSONObj newDoc;
+                        {
+                            CanonicalQuery* rawCq;
+                            uassertStatusOK(CanonicalQuery::canonicalize(ns, queryModified, &rawCq,
+                                                                         WhereCallbackNoop()));
+                            boost::scoped_ptr<CanonicalQuery> cq(rawCq);
+
+                            UpdateDriver::Options opts;
+                            UpdateDriver driver(opts);
+                            uassertStatusOK(driver.parse(update));
+
+                            mutablebson::Document doc(newDoc,
+                                                      mutablebson::Document::kInPlaceDisabled);
+
+                            const bool ignoreVersion = false;
+                            UpdateLifecycleImpl updateLifecycle(ignoreVersion, collection->ns());
+
+                            UpdateStats stats;
+                            const bool isInternalRequest = false;
+
+                            uassertStatusOK(UpdateStage::applyUpdateOpsForInsert(cq.get(),
+                                                                                 queryModified,
+                                                                                 &driver,
+                                                                                 &updateLifecycle,
+                                                                                 &doc,
+                                                                                 isInternalRequest,
+                                                                                 &stats,
+                                                                                 &newDoc));
+                        }
+
+                        const bool enforceQuota = true;
+                        uassertStatusOK(collection->insertDocument(txn, newDoc, enforceQuota)
+                                        .getStatus());
+
+                        // This is the last thing we do before the WriteUnitOfWork commits (except
+                        // for some BSON manipulation).
+                        repl::logOp(txn, "i", collection->ns().ns().c_str(), newDoc);
+
+                        // The third argument indicates whether or not we have something for the
+                        // 'value' field returned by a findAndModify command.
+                        //
+                        // Since we did an insert, we have a doc only if the user asked us to
+                        // return the new copy. We return a value of 'null' if we inserted and
+                        // the user asked for the old copy.
+                        _appendHelper(result, newDoc, returnNew, fields, whereCallback);
+
+                        BSONObjBuilder le(result.subobjStart("lastErrorObject"));
+                        le.appendBool("updatedExisting", false);
+                        le.appendNumber("n", 1);
+                        le.appendAs(newDoc["_id"], kUpsertedFieldName);
+                        le.done();
+                    }
                 }
                 else {
                     // we found it or we're updating
-                    
+
                     if ( ! returnNew ) {
                         _appendHelper(result, doc, found, fields, whereCallback);
                     }
-                    
+
                     const NamespaceString requestNs(ns);
                     UpdateRequest request(requestNs);
 
@@ -404,6 +453,7 @@ namespace mongo {
                     request.setUpdates(update);
                     request.setUpsert(upsert);
                     request.setUpdateOpLog();
+                    request.setStoreResultDoc(returnNew);
 
                     request.setYieldPolicy(PlanExecutor::YIELD_MANUAL);
 
@@ -416,45 +466,15 @@ namespace mongo {
                                                      request,
                                                      &txn->getCurOp()->debug());
 
-                    if (!found && res.existing) {
-                        // No match was found during the read part of this find and modify, which
-                        // means that we're here doing an upsert. But the update also told us that
-                        // we modified an *already existing* document. This probably means that
-                        // the query reported EOF based on an out-of-date snapshot. This should be
-                        // a rare event, so we handle it by throwing a write conflict.
-                        throw WriteConflictException();
+                    invariant(collection);
+                    invariant(res.existing);
+                    LOG(3) << "update result: "  << res;
+
+                    if (returnNew) {
+                        dassert(!res.newObj.isEmpty());
+                        _appendHelper(result, res.newObj, true, fields, whereCallback);
                     }
 
-                    if ( !collection ) {
-                        // collection created by an upsert
-                        collection = ctx.db()->getCollection(ns);
-                    }
-
-                    LOG(3) << "update result: "  << res ;
-                    if ( returnNew ) {
-                        if ( !res.upserted.isEmpty() ) {
-                            BSONElement upsertedElem = res.upserted[kUpsertedFieldName];
-                            LOG(3) << "using new _id to get new doc: "
-                                   << upsertedElem;
-                            queryModified = upsertedElem.wrap("_id");
-                        }
-                        else if ( queryModified["_id"].type() ) {
-                            // we do this so that if the update changes the fields, it still matches
-                            queryModified = queryModified["_id"].wrap();
-                        }
-
-                        LOG(3) << "using modified query to return the new doc: " << queryModified;
-                        if ( ! Helpers::findOne( txn, collection, queryModified, doc ) ) {
-                            errmsg = str::stream() << "can't find object after modification  " 
-                                                   << " ns: " << ns 
-                                                   << " queryModified: " << queryModified 
-                                                   << " queryOriginal: " << query;
-                            log() << errmsg << endl;
-                            return false;
-                        }
-                        _appendHelper(result, doc, true, fields, whereCallback);
-                    }
-                    
                     BSONObjBuilder le( result.subobjStart( "lastErrorObject" ) );
                     le.appendBool( "updatedExisting" , res.existing );
                     le.appendNumber( "n" , res.numMatched );
@@ -462,7 +482,6 @@ namespace mongo {
                         le.append( res.upserted[kUpsertedFieldName] );
                     }
                     le.done();
-                    
                 }
             }
 

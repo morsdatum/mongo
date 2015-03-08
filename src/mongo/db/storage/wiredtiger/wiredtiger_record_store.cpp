@@ -219,7 +219,7 @@ namespace {
             if ( _sizeStorer ) {
                 long long numRecords;
                 long long dataSize;
-                _sizeStorer->load( uri, &numRecords, &dataSize );
+                _sizeStorer->loadFromCache( uri, &numRecords, &dataSize );
                 _numRecords.store( numRecords );
                 _dataSize.store( dataSize );
                 _sizeStorer->onCreate( this, numRecords, dataSize );
@@ -239,7 +239,7 @@ namespace {
                 }
 
                 if ( _sizeStorer ) {
-                    _sizeStorer->store( _uri, _numRecords.load(), _dataSize.load() );
+                    _sizeStorer->storeToCache( _uri, _numRecords.load(), _dataSize.load() );
                 }
             }
 
@@ -257,7 +257,6 @@ namespace {
         LOG(1) << "~WiredTigerRecordStore for: " << ns();
         if ( _sizeStorer ) {
             _sizeStorer->onDestroy( this );
-            _sizeStorer->store( _uri, _numRecords.load(), _dataSize.load() );
         }
     }
 
@@ -410,7 +409,7 @@ namespace {
             // We're not actually going to delete anything, but we're going to syncronize
             // on the deleter thread.
             // Don't wait forever: we're in a transaction, we could block eviction.
-            (void)lock.timed_lock(boost::posix_time::millisec(1000));
+            (void)lock.timed_lock(boost::posix_time::millisec(200));
             return 0;
         }
         else {
@@ -421,7 +420,7 @@ namespace {
                     return 0;
 
                 // Don't wait forever: we're in a transaction, we could block eviction.
-                if (!lock.timed_lock(boost::posix_time::millisec(1000)))
+                if (!lock.timed_lock(boost::posix_time::millisec(200)))
                     return 0;
 
                 // If we already waited, let someone else do cleanup unless we are significantly
@@ -463,7 +462,7 @@ namespace {
             RecordId newestOld;
             int ret = 0;
             while ((sizeSaved < sizeOverCap || docsRemoved < docsOverCap) &&
-                   (docsRemoved < 1000) &&
+                   (docsRemoved < 20000) &&
                    (ret = WT_OP_CHECK(c->next(c))) == 0) {
 
                 int64_t key;
@@ -509,10 +508,18 @@ namespace {
                 ret = WT_OP_CHECK(start->next(start));
                 invariantWTOK(ret);
 
-                invariantWTOK(session->truncate(session, NULL, start, c, NULL));
-                _changeNumRecords(txn, -docsRemoved);
-                _increaseDataSize(txn, -sizeSaved);
-                wuow.commit();
+                ret = session->truncate(session, NULL, start, c, NULL);
+                if (ret == ENOENT || ret == WT_NOTFOUND) {
+                    // TODO we should remove this case once SERVER-17141 is resolved
+                    log() << "Soft failure truncating capped collection. Will try again later.";
+                    docsRemoved = 0;
+                }
+                else {
+                    invariantWTOK(ret);
+                    _changeNumRecords(txn, -docsRemoved);
+                    _increaseDataSize(txn, -sizeSaved);
+                    wuow.commit();
+                }
             }
         }
         catch ( const WriteConflictException& wce ) {
@@ -766,7 +773,7 @@ namespace {
 
             long long oldNumRecords;
             long long oldDataSize;
-            _sizeStorer->load(_uri, &oldNumRecords, &oldDataSize);
+            _sizeStorer->loadFromCache(_uri, &oldNumRecords, &oldDataSize);
             if (nrecords != oldNumRecords || dataSizeTotal != oldDataSize) {
                 warning() << _uri << ": Existing data in size storer ("
                           << oldNumRecords << " records " << oldDataSize << " bytes) "
@@ -775,7 +782,7 @@ namespace {
                           << "Updating size storer with new values.";
             }
 
-            _sizeStorer->store(_uri, _numRecords.load(), _dataSize.load());
+            _sizeStorer->storeToCache(_uri, _numRecords.load(), _dataSize.load());
         }
 
         output->appendNumber( "nrecords", nrecords );
@@ -838,25 +845,6 @@ namespace {
             bob.append("reason", status.reason());
         }
 
-    }
-
-    Status WiredTigerRecordStore::setCustomOption( OperationContext* txn,
-                                                   const BSONElement& option,
-                                                   BSONObjBuilder* info ) {
-        string optionName = option.fieldName();
-        if ( !option.isBoolean() ) {
-            return Status( ErrorCodes::BadValue, "Invalid Value" );
-        }
-        // TODO: expose some WiredTiger configurations
-        if ( optionName == "usePowerOf2Sizes" ) {
-            return Status::OK();
-        } else
-        if ( optionName.compare( "verify_checksums" ) == 0 ) {
-        }
-        else
-            return Status( ErrorCodes::InvalidOptions, "Invalid Option" );
-
-        return Status::OK();
     }
 
     Status WiredTigerRecordStore::oplogDiskLocRegister( OperationContext* txn,
@@ -932,7 +920,7 @@ namespace {
                                                        long long dataSize) {
         _numRecords.store(numRecords);
         _dataSize.store(dataSize);
-        _sizeStorer->store(_uri, numRecords, dataSize);
+        _sizeStorer->storeToCache(_uri, numRecords, dataSize);
     }
 
     RecordId WiredTigerRecordStore::_nextId() {
@@ -996,7 +984,7 @@ namespace {
         }
 
         if ( _sizeStorer && _sizeStorerCounter++ % 1000 == 0 ) {
-            _sizeStorer->store( _uri, _numRecords.load(), _dataSize.load() );
+            _sizeStorer->storeToCache( _uri, _numRecords.load(), _dataSize.load() );
         }
     }
 

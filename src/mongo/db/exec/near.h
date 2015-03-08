@@ -149,6 +149,18 @@ namespace mongo {
     private:
 
         //
+        // Save/restore/invalidate work specific to the search type.
+        //
+
+        virtual void finishSaveState() = 0;
+
+        virtual void finishRestoreState(OperationContext* txn) = 0;
+
+        virtual void finishInvalidate(OperationContext* txn,
+                                      const RecordId& dl,
+                                      InvalidationType type) = 0;
+
+        //
         // Generic methods for progressive search functionality
         //
 

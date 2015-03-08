@@ -87,7 +87,17 @@ namespace mongo {
         virtual PlanStage::StageState initialize(OperationContext* txn,
                                                  WorkingSet* workingSet,
                                                  Collection* collection);
+
     private:
+
+        virtual void finishSaveState();
+
+        virtual void finishRestoreState(OperationContext* txn);
+
+        virtual void finishInvalidate(OperationContext* txn,
+                                      const RecordId& dl,
+                                      InvalidationType type);
+
         const GeoNearParams _nearParams;
 
         // The 2D index we're searching over
@@ -132,7 +142,17 @@ namespace mongo {
         virtual PlanStage::StageState initialize(OperationContext* txn,
                                                  WorkingSet* workingSet,
                                                  Collection* collection);
+
     private:
+
+        virtual void finishSaveState();
+
+        virtual void finishRestoreState(OperationContext* txn);
+
+        virtual void finishInvalidate(OperationContext* txn,
+                                      const RecordId& dl,
+                                      InvalidationType type);
+
         const GeoNearParams _nearParams;
 
         // The 2D index we're searching over

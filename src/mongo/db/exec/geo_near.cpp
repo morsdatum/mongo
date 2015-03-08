@@ -302,6 +302,10 @@ namespace mongo {
                                    Collection* collection,
                                    double* estimatedDistance);
 
+        void saveState();
+        void restoreState(OperationContext* txn);
+        void invalidate(OperationContext* txn, const RecordId& dl, InvalidationType type);
+
     private:
         void buildIndexScan(OperationContext* txn, WorkingSet* workingSet, Collection* collection);
 
@@ -401,6 +405,27 @@ namespace mongo {
         return state;
     }
 
+    void GeoNear2DStage::DensityEstimator::saveState() {
+        if (_indexScan) {
+            _indexScan->saveState();
+        }
+    }
+
+    void GeoNear2DStage::DensityEstimator::restoreState(OperationContext* txn) {
+        if (_indexScan) {
+            _indexScan->restoreState(txn);
+        }
+    }
+
+    void GeoNear2DStage::DensityEstimator::invalidate(OperationContext* txn,
+                                                      const RecordId& dl,
+                                                      InvalidationType type) {
+        if (_indexScan) {
+            _indexScan->invalidate(txn, dl, type);
+        }
+    }
+
+
     PlanStage::StageState GeoNear2DStage::initialize(OperationContext* txn,
                                                      WorkingSet* workingSet,
                                                      Collection* collection)
@@ -452,6 +477,26 @@ namespace mongo {
     }
 
     GeoNear2DStage::~GeoNear2DStage() {
+    }
+
+    void GeoNear2DStage::finishSaveState() {
+        if (_densityEstimator) {
+            _densityEstimator->saveState();
+        }
+    }
+
+    void GeoNear2DStage::finishRestoreState(OperationContext* txn) {
+        if (_densityEstimator) {
+            _densityEstimator->restoreState(txn);
+        }
+    }
+
+    void GeoNear2DStage::finishInvalidate(OperationContext* txn,
+                                          const RecordId& dl,
+                                          InvalidationType type) {
+        if (_densityEstimator) {
+            _densityEstimator->invalidate(txn, dl, type);
+        }
     }
 
     namespace {
@@ -971,6 +1016,10 @@ namespace mongo {
                                    Collection* collection,
                                    double* estimatedDistance);
 
+        void saveState();
+        void restoreState(OperationContext* txn);
+        void invalidate(OperationContext* txn, const RecordId& dl, InvalidationType type);
+
     private:
         void buildIndexScan(OperationContext* txn, WorkingSet* workingSet, Collection* collection);
 
@@ -1069,6 +1118,26 @@ namespace mongo {
         return state;
     }
 
+    void GeoNear2DSphereStage::DensityEstimator::saveState() {
+        if (_indexScan) {
+            _indexScan->saveState();
+        }
+    }
+
+    void GeoNear2DSphereStage::DensityEstimator::restoreState(OperationContext* txn) {
+        if (_indexScan) {
+            _indexScan->restoreState(txn);
+        }
+    }
+
+    void GeoNear2DSphereStage::DensityEstimator::invalidate(OperationContext* txn,
+                                                            const RecordId& dl,
+                                                            InvalidationType type) {
+        if (_indexScan) {
+            _indexScan->invalidate(txn, dl, type);
+        }
+    }
+
 
     PlanStage::StageState GeoNear2DSphereStage::initialize(OperationContext* txn,
                                                            WorkingSet* workingSet,
@@ -1097,6 +1166,26 @@ namespace mongo {
         }
 
         return state;
+    }
+
+    void GeoNear2DSphereStage::finishSaveState() {
+        if (_densityEstimator) {
+            _densityEstimator->saveState();
+        }
+    }
+
+    void GeoNear2DSphereStage::finishRestoreState(OperationContext* txn) {
+        if (_densityEstimator) {
+            _densityEstimator->restoreState(txn);
+        }
+    }
+
+    void GeoNear2DSphereStage::finishInvalidate(OperationContext* txn,
+                                                const RecordId& dl,
+                                                InvalidationType type) {
+        if (_densityEstimator) {
+            _densityEstimator->invalidate(txn, dl, type);
+        }
     }
 
     StatusWith<NearStage::CoveredInterval*> //
