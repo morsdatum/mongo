@@ -336,9 +336,7 @@ add_option('variables-help',
            "Print the help text for SCons variables", 0, False)
 
 if darwin:
-    osx_version_choices = ['10.7', '10.8', '10.9', '10.10']
-    add_option("osx-version-min", "minimum OS X version to support", 1, True,
-               type = 'choice', default = osx_version_choices[0], choices = osx_version_choices)
+    add_option("osx-version-min", "minimum OS X version to support", 1, True)
 
 elif windows:
     win_version_min_choices = {
@@ -375,9 +373,19 @@ add_option('cache-dir',
            "Specify the directory to use for caching objects if --cache is in use",
            1, False, default="$BUILD_ROOT/scons/cache")
 
+variable_parse_mode_choices=['auto', 'posix', 'other']
+add_option('variable-parse-mode',
+           "Select which parsing mode is used to interpret command line variables",
+           1, False,
+           type='choice', default=variable_parse_mode_choices[0],
+           choices=variable_parse_mode_choices)
+
 # Setup the command-line variables
 def variable_shlex_converter(val):
-    return shlex.split(val)
+    parse_mode = get_option('variable-parse-mode')
+    if parse_mode == 'auto':
+        parse_mode = 'other' if windows else 'posix'
+    return shlex.split(val, posix=(parse_mode == 'posix'))
 
 env_vars = Variables()
 
@@ -417,6 +425,10 @@ env_vars.Add('LINKFLAGS',
     help='Sets flags for the linker',
     converter=variable_shlex_converter)
 
+env_vars.Add('RPATH',
+    help='Set the RPATH for dynamic libraries and executables',
+    converter=variable_shlex_converter)
+
 env_vars.Add('SHCCFLAGS',
     help='Sets flags for the C and C++ compiler when building shared libraries',
     converter=variable_shlex_converter)
@@ -451,7 +463,7 @@ if buildDir[0] not in ['$', '#']:
 
 cacheDir = get_option('cache-dir').rstrip('/')
 if cacheDir[0] not in ['$', '#']:
-    if not os.path.isabs(cachdDIr):
+    if not os.path.isabs(cacheDir):
         print("Do not use relative paths with --cache-dir")
         Exit(1)
 
@@ -569,7 +581,7 @@ envDict = dict(BUILD_ROOT=buildDir,
                # changes to MCI.
                UNITTEST_LIST='$BUILD_ROOT/unittests.txt',
                PYSYSPLATFORM=os.sys.platform,
-               PCRE_VERSION='8.30',
+               PCRE_VERSION='8.36',
                CONFIGUREDIR=sconsDataDir.Dir('sconf_temp'),
                CONFIGURELOG=sconsDataDir.File('config.log'),
                INSTALL_DIR=installDir,
@@ -767,6 +779,7 @@ if has_option( "cpppath" ):
 
 env.Prepend( CPPDEFINES=[ "_SCONS" , 
                           "MONGO_EXPOSE_MACROS" ,
+                          "PCRE_STATIC",  # for pcre on Windows
                           "SUPPORT_UTF8" ],  # for pcre
 )
 

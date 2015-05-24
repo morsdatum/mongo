@@ -34,6 +34,7 @@
 
 #include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <boost/shared_ptr.hpp>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -437,6 +438,53 @@ namespace mongo {
     static void _initAndListen(int listenPort ) {
         Client::initThread("initandlisten");
 
+        // Due to SERVER-15389, we must setupSockets first thing at startup in order to avoid
+        // obtaining too high a file descriptor for our calls to select().
+        MessageServer::Options options;
+        options.port = listenPort;
+        options.ipList = serverGlobalParams.bind_ip;
+
+        MessageServer* server = createServer(options, new MyMessageHandler());
+        server->setAsTimeTracker();
+
+        // This is what actually creates the sockets, but does not yet listen on them because we
+        // do not want connections to just hang if recovery takes a very long time.
+        server->setupSockets();
+
+        boost::shared_ptr<DbWebServer> dbWebServer;
+        if (serverGlobalParams.isHttpInterfaceEnabled) {
+            dbWebServer.reset(new DbWebServer(serverGlobalParams.bind_ip,
+                                              serverGlobalParams.port + 1000,
+                                              new RestAdminAccess()));
+            dbWebServer->setupSockets();
+        }
+
+        // Warn if we detect configurations for multiple registered storage engines in
+        // the same configuration file/environment.
+        if (serverGlobalParams.parsedOpts.hasField("storage")) {
+            BSONElement storageElement = serverGlobalParams.parsedOpts.getField("storage");
+            invariant(storageElement.isABSONObj());
+            BSONObj storageParamsObj = storageElement.Obj();
+            BSONObjIterator i = storageParamsObj.begin();
+            while (i.more()) {
+                BSONElement e = i.next();
+                // Ignore if field name under "storage" matches current storage engine.
+                if (storageGlobalParams.engine == e.fieldName()) {
+                    continue;
+                }
+
+                // Warn if field name matches non-active registered storage engine.
+                if (getGlobalEnvironment()->isRegisteredStorageEngine(e.fieldName())) {
+                    warning() << "Detected configuration for non-active storage engine "
+                              << e.fieldName()
+                              << " when current storage engine is "
+                              << storageGlobalParams.engine;
+                }
+            }
+        }
+
+        getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
+
         const repl::ReplSettings& replSettings =
                 repl::getGlobalReplicationCoordinator()->getSettings();
 
@@ -481,46 +529,11 @@ namespace mongo {
                     boost::filesystem::exists(storageGlobalParams.repairpath));
         }
 
-        // Warn if we detect configurations for multiple registered storage engines in
-        // the same configuration file/environment.
-        if (serverGlobalParams.parsedOpts.hasField("storage")) {
-            BSONElement storageElement = serverGlobalParams.parsedOpts.getField("storage");
-            invariant(storageElement.isABSONObj());
-            BSONObj storageParamsObj = storageElement.Obj();
-            BSONObjIterator i = storageParamsObj.begin();
-            while (i.more()) {
-                BSONElement e = i.next();
-                // Ignore if field name under "storage" matches current storage engine.
-                if (storageGlobalParams.engine == e.fieldName()) continue;
-                // Warn if field name matches non-active registered storage engine.
-                if (getGlobalEnvironment()->isRegisteredStorageEngine(e.fieldName())) {
-                    warning()
-                        << "Detected configuration for non-active storage engine " << e.fieldName()
-                        << " when current storage engine is " << storageGlobalParams.engine;
-                }
-            }
-        }
-
-        // Due to SERVER-15389, we must setupSockets first thing at startup in order to avoid
-        // obtaining too high a file descriptor for our calls to select().
-        MessageServer::Options options;
-        options.port = listenPort;
-        options.ipList = serverGlobalParams.bind_ip;
-
-        MessageServer* server = createServer(options, new MyMessageHandler());
-        server->setAsTimeTracker();
-
-        // This is what actually creates the sockets, but does not yet listen on them because we
-        // do not want connections to just hang if recovery takes a very long time.
-        server->setupSockets();
-
         // TODO:  This should go into a MONGO_INITIALIZER once we have figured out the correct
         // dependencies.
         if (snmpInit) {
             snmpInit();
         }
-
-        getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
 
         boost::filesystem::remove_all(storageGlobalParams.dbpath + "/_tmp/");
 
@@ -552,7 +565,8 @@ namespace mongo {
         if (serverGlobalParams.isHttpInterfaceEnabled) {
             snapshotThread.go();
 
-            boost::thread web(stdx::bind(&webServerThread, new RestAdminAccess()));
+            invariant(dbWebServer);
+            boost::thread web(stdx::bind(&webServerListenThread, dbWebServer));
             web.detach();
         }
 

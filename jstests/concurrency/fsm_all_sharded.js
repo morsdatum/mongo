@@ -7,6 +7,12 @@ var dir = 'jstests/concurrency/fsm_workloads';
 var blacklist = [
     // Disabled due to known bugs
     'agg_match.js', // SERVER-3645 .count() can be wrong on sharded collections
+    'count.js', // SERVER-3645 .count() can be wrong on sharded collections
+    'count_limit_skip.js', // SERVER-3645 .count() can be wrong on sharded collections
+    'count_noindex.js', // SERVER-3645 .count() can be wrong on sharded collections
+    'yield_sort.js', // SERVER-17011 Cursor can return objects out of order if updated during query
+    'yield_sort_merge.js', // SERVER-17011 also applies, since this query uses SORT stage,
+                           // not SORT_MERGE stage in sharded environment
 
     // Disabled due to MongoDB restrictions and/or workload restrictions
 
@@ -25,6 +31,10 @@ var blacklist = [
 
     'agg_group_external.js', // uses >100MB of data, and is flaky
     'agg_sort_external.js', // uses >100MB of data, and is flaky
+    'compact.js', // compact can only be run against a standalone mongod
+    'compact_simultaneous_padding_bytes.js', // compact can only be run against a mongod
+    'convert_to_capped_collection.js', // convertToCapped can't be run on mongos processes
+    'convert_to_capped_collection_index.js', // convertToCapped can't be run on mongos processes
     'findAndModify_remove.js', // our findAndModify queries lack shard keys
     'findAndModify_update.js', // our findAndModify queries lack shard keys
     'findAndModify_update_collscan.js', // our findAndModify queries lack shard keys
@@ -37,9 +47,12 @@ var blacklist = [
     'indexed_insert_eval_nolock.js', // eval doesn't work with sharded collections
     'remove_single_document.js', // our .remove(query, {justOne: true}) calls lack shard keys
     'remove_single_document_eval.js', // eval doesn't work with sharded collections
+    'remove_single_document_eval_nolock.js', // eval doesn't work with sharded collections
     'update_simple_eval.js', // eval doesn't work with sharded collections
     'update_simple_eval_nolock.js', // eval doesn't work with sharded collections
     'update_upsert_multi.js', // our update queries lack shard keys
+    'yield_and_hashed.js', // stagedebug can only be run against a standalone mongod
+    'yield_and_sorted.js', // stagedebug can only be run against a standalone mongod
 ].map(function(file) { return dir + '/' + file; });
 
 // SERVER-16196 re-enable executing workloads against sharded clusters

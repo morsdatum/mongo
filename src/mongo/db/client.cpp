@@ -128,9 +128,8 @@ namespace {
           _desc(desc),
           _threadId(boost::this_thread::get_id()),
           _connectionId(p ? p->connectionId() : 0),
-          _god(0),
+          _inDirectClient(false),
           _txn(NULL),
-          _locker(newLocker()),
           _lastOp(0),
           _shutdown(false) {
 
@@ -138,8 +137,6 @@ namespace {
     }
 
     Client::~Client() {
-        _god = 0;
-
         if ( ! inShutdown() ) {
             // we can't clean up safely once we're in shutdown
             {
@@ -294,6 +291,7 @@ namespace {
         }
     }
 
+
     void Client::Context::checkNotStale() const { 
         switch ( _client->_curOp->getOp() ) {
         case dbGetMore: // getMore's are special and should be handled else where
@@ -323,12 +321,20 @@ namespace {
     }
     
     Client::Context::~Context() {
-        DEV verify( _client == currentClient.get() );
+        DEV verify(_client == currentClient.get());
 
         // Lock must still be held
         invariant(_txn->lockState()->isLocked());
 
         _client->_curOp->recordGlobalTime(_txn->lockState()->isWriteLocked(), _timer.micros());
+    }
+
+    Locker* Client::getLocker() {
+        if (!_locker) {
+            _locker.reset(newLocker());
+        }
+
+        return _locker.get();
     }
 
     void Client::appendLastOp( BSONObjBuilder& b ) const {

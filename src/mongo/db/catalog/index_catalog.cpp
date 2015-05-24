@@ -508,6 +508,9 @@ namespace {
         if (name.find('\0') != std::string::npos)
             return Status(ErrorCodes::CannotCreateIndex, "index names cannot contain NUL bytes");
 
+        if (name.empty())
+            return Status(ErrorCodes::CannotCreateIndex, "index names cannot be empty");
+
         const std::string indexNamespace = IndexDescriptor::makeIndexNamespace( nss.ns(), name );
         if ( indexNamespace.length() > NamespaceString::MaxNsLen )
             return Status( ErrorCodes::CannotCreateIndex,
@@ -1087,6 +1090,11 @@ namespace {
         InsertDeleteOptions options;
         options.logIfError = logIfError;
         options.dupsAllowed = isDupsAllowed( index->descriptor() );
+
+        // For unindex operations, dupsAllowed=false really means that it is safe to delete anything
+        // that matches the key, without checking the RecordID, since dups are impossible. We need
+        // to disable this behavior for in-progress indexes. See SERVER-17487 for more details.
+        options.dupsAllowed = options.dupsAllowed || !index->isReady(txn);
 
         int64_t removed;
         Status status = index->accessMethod()->remove(txn, obj, loc, options, &removed);

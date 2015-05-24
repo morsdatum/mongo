@@ -6,11 +6,14 @@ if has_option("rocksdb"):
     env.Library(
         target= 'storage_rocks_base',
         source= [
+            'rocks_counter_manager.cpp',
+            'rocks_global_options.cpp',
             'rocks_engine.cpp',
             'rocks_record_store.cpp',
             'rocks_recovery_unit.cpp',
             'rocks_index.cpp',
             'rocks_transaction.cpp',
+            'rocks_util.cpp',
             ],
         LIBDEPS= [
             '$BUILD_DIR/mongo/bson',
@@ -34,7 +37,10 @@ if has_option("rocksdb"):
         target= 'storage_rocks',
         source= [
             'rocks_init.cpp',
+            'rocks_options_init.cpp',
+            'rocks_parameters.cpp',
             'rocks_record_store_mongod.cpp',
+            'rocks_server_status.cpp',
             ],
         LIBDEPS= [
             'storage_rocks_base',

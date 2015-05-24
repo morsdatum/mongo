@@ -75,36 +75,12 @@ __wt_evict_file(WT_SESSION_IMPL *session, int syncop)
 		case WT_SYNC_CLOSE:
 			/*
 			 * Evict the page.
-			 * Do not attempt to evict pages expected to be merged
-			 * into their parents, with the exception that the root
-			 * page can't be merged, it must be written.
 			 */
-			if (__wt_ref_is_root(ref) ||
-			    page->modify == NULL ||
-			    !F_ISSET(page->modify, WT_PM_REC_EMPTY))
-				WT_ERR(__wt_evict(session, ref, 1));
+			WT_ERR(__wt_evict(session, ref, 1));
 			break;
 		case WT_SYNC_DISCARD:
-			/*
-			 * Ordinary discard of the page, whether clean or dirty.
-			 * If we see a dirty page in an ordinary discard (e.g.,
-			 * from sweep), give up: an update must have happened
-			 * since the file was selected for sweeping.
-			 */
-			if (__wt_page_is_modified(page))
-				WT_ERR(EBUSY);
-
-			/*
-			 * If the page contains an update that is too recent to
-			 * evict, stop.  This should never happen during
-			 * connection close, but in other paths our caller
-			 * should be prepared to deal with this case.
-			 */
-			if (page->modify != NULL &&
-			    !__wt_txn_visible_all(session,
-			    page->modify->rec_max_txn))
-				WT_ERR(EBUSY);
-
+			WT_ASSERT(session,
+			    __wt_page_can_evict(session, page, 0));
 			__wt_evict_page_clean_update(session, ref);
 			break;
 		case WT_SYNC_DISCARD_FORCE:

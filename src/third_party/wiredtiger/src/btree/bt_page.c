@@ -165,6 +165,7 @@ __wt_page_in_func(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t flags
 			if (oldgen && page->read_gen == WT_READGEN_NOTSET)
 				__wt_page_evict_soon(page);
 			else if (!LF_ISSET(WT_READ_NO_GEN) &&
+			    page->read_gen != WT_READGEN_OLDEST &&
 			    page->read_gen < __wt_cache_read_gen(session))
 				page->read_gen =
 				    __wt_cache_read_gen_set(session);
@@ -303,8 +304,8 @@ err:			if ((pindex = WT_INTL_INDEX_COPY(page)) != NULL) {
  *	Build in-memory page information.
  */
 int
-__wt_page_inmem(WT_SESSION_IMPL *session,
-    WT_REF *ref, const void *image, uint32_t flags, WT_PAGE **pagep)
+__wt_page_inmem(WT_SESSION_IMPL *session, WT_REF *ref,
+    const void *image, size_t memsize, uint32_t flags, WT_PAGE **pagep)
 {
 	WT_DECL_RET;
 	WT_PAGE *page;
@@ -371,9 +372,10 @@ __wt_page_inmem(WT_SESSION_IMPL *session,
 
 	/*
 	 * Track the memory allocated to build this page so we can update the
-	 * cache statistics in a single call.
+	 * cache statistics in a single call. If the disk image is in allocated
+	 * memory, start with that.
 	 */
-	size = LF_ISSET(WT_PAGE_DISK_ALLOC) ? dsk->mem_size : 0;
+	size = LF_ISSET(WT_PAGE_DISK_ALLOC) ? memsize : 0;
 
 	switch (page->type) {
 	case WT_PAGE_COL_FIX:
@@ -611,7 +613,7 @@ __inmem_row_int(WT_SESSION_IMPL *session, WT_PAGE *page, size_t *sizep)
 
 			WT_ERR(__wt_row_ikey_incr(session, page,
 			    WT_PAGE_DISK_OFFSET(page, cell),
-			    current->data, current->size, &ref->key.ikey));
+			    current->data, current->size, ref));
 
 			*sizep += sizeof(WT_IKEY) + current->size;
 			break;

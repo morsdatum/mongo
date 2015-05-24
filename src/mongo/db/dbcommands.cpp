@@ -583,7 +583,7 @@ namespace mongo {
                     "must pass name of collection to create",
                     firstElt.valuestrsafe()[0] != '\0');
 
-            Status status = userAllowedWriteNS( dbname, firstElt.valuestr() );
+            Status status = userAllowedCreateNS( dbname, firstElt.valuestr() );
             if ( !status.isOK() ) {
                 return appendCommandStatus( result, status );
             }
@@ -1068,6 +1068,9 @@ namespace mongo {
             BSONForEach( e, jsobj ) {
                 if ( str::equals( "collMod", e.fieldName() ) ) {
                     // no-op
+                }
+                else if ( str::startsWith( e.fieldName(), "$" ) ) {
+                    // no-op: ignore top-level fields prefixed with $. They are for the command processor.
                 }
                 else if ( LiteParsedQuery::cmdOptionMaxTimeMS == e.fieldNameStringData() ) {
                     // no-op

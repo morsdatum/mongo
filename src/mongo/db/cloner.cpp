@@ -366,9 +366,12 @@ namespace mongo {
         WriteUnitOfWork wunit(txn);
         indexer.commit();
         if (logForRepl) {
+            const string targetSystemIndexesCollectionName =
+                to_collection.getSystemIndexesCollection();
+            const char* createIndexNs = targetSystemIndexesCollectionName.c_str();
             for (vector<BSONObj>::const_iterator it = indexesToBuild.begin();
                     it != indexesToBuild.end(); ++it) {
-                repl::logOp(txn, "i", to_collection.ns().c_str(), *it);
+                repl::logOp(txn, "i", createIndexNs, *it);
             }
         }
         wunit.commit();
@@ -639,6 +642,8 @@ namespace mongo {
                     uassertStatusOK(indexer.init(c->getIndexCatalog()->getDefaultIdIndexSpec()));
                     uassertStatusOK(indexer.insertAllDocumentsInCollection(&dups));
 
+                    // This must be done before we commit the indexer. See the comment about
+                    // dupsAllowed in IndexCatalog::_unindexRecord and SERVER-17487.
                     for (set<RecordId>::const_iterator it = dups.begin(); it != dups.end(); ++it) {
                         WriteUnitOfWork wunit(txn);
                         BSONObj id;

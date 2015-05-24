@@ -221,11 +221,12 @@ __txn_log_file_sync(WT_SESSION_IMPL *session, uint32_t flags, WT_LSN *lsnp)
 	WT_DECL_RET;
 	size_t header_size;
 	uint32_t rectype = WT_LOGREC_FILE_SYNC;
-	int start;
+	int start, need_sync;
 	const char *fmt = WT_UNCHECKED_STRING(III);
 
 	btree = S2BT(session);
 	start = LF_ISSET(WT_TXN_LOG_CKPT_START);
+	need_sync = LF_ISSET(WT_TXN_LOG_CKPT_SYNC);
 
 	WT_RET(__wt_struct_size(
 	    session, &header_size, fmt, rectype, btree->id, start));
@@ -236,7 +237,8 @@ __txn_log_file_sync(WT_SESSION_IMPL *session, uint32_t flags, WT_LSN *lsnp)
 	    fmt, rectype, btree->id, start));
 	logrec->size += (uint32_t)header_size;
 
-	WT_ERR(__wt_log_write(session, logrec, lsnp, 0));
+	WT_ERR(__wt_log_write(
+	    session, logrec, lsnp, need_sync ? WT_LOG_FSYNC : 0));
 err:	__wt_logrec_free(session, &logrec);
 	return (ret);
 }
@@ -300,7 +302,7 @@ __wt_txn_checkpoint_log(
 	switch (flags) {
 	case WT_TXN_LOG_CKPT_PREPARE:
 		txn->full_ckpt = 1;
-		*ckpt_lsn = S2C(session)->log->alloc_lsn;
+		*ckpt_lsn = S2C(session)->log->write_start_lsn;
 		break;
 
 	case WT_TXN_LOG_CKPT_START:
@@ -325,7 +327,7 @@ __wt_txn_checkpoint_log(
 			txn->ckpt_nsnapshot = 0;
 			WT_CLEAR(empty);
 			ckpt_snapshot = &empty;
-			*ckpt_lsn = S2C(session)->log->alloc_lsn;
+			*ckpt_lsn = S2C(session)->log->write_start_lsn;
 		} else
 			ckpt_snapshot = txn->ckpt_snapshot;
 
@@ -360,6 +362,8 @@ __wt_txn_checkpoint_log(
 		__wt_scr_free(session, &txn->ckpt_snapshot);
 		txn->full_ckpt = 0;
 		break;
+
+	WT_ILLEGAL_VALUE_ERR(session);
 	}
 
 err:	__wt_logrec_free(session, &logrec);
@@ -436,7 +440,8 @@ __wt_txn_truncate_end(WT_SESSION_IMPL *session)
  */
 static int
 __txn_printlog(WT_SESSION_IMPL *session,
-    WT_ITEM *rawrec, WT_LSN *lsnp, void *cookie, int firstrecord)
+    WT_ITEM *rawrec, WT_LSN *lsnp, WT_LSN *next_lsnp,
+    void *cookie, int firstrecord)
 {
 	FILE *out;
 	WT_LOG_RECORD *logrec;
@@ -448,6 +453,7 @@ __txn_printlog(WT_SESSION_IMPL *session,
 	const uint8_t *end, *p;
 	const char *msg;
 
+	WT_UNUSED(next_lsnp);
 	out = cookie;
 
 	p = LOG_SKIP_HEADER(rawrec->data);

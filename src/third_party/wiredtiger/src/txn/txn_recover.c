@@ -263,13 +263,15 @@ __txn_commit_apply(
  */
 static int
 __txn_log_recover(WT_SESSION_IMPL *session,
-    WT_ITEM *logrec, WT_LSN *lsnp, void *cookie, int firstrecord)
+    WT_ITEM *logrec, WT_LSN *lsnp, WT_LSN *next_lsnp,
+    void *cookie, int firstrecord)
 {
 	WT_RECOVERY *r;
 	const uint8_t *end, *p;
 	uint64_t txnid;
 	uint32_t rectype;
 
+	WT_UNUSED(next_lsnp);
 	r = cookie;
 	p = LOG_SKIP_HEADER(logrec->data);
 	end = (const uint8_t *)logrec->data + logrec->size;
@@ -304,6 +306,7 @@ __recovery_setup_file(WT_RECOVERY *r, const char *uri, const char *config)
 {
 	WT_CONFIG_ITEM cval;
 	WT_LSN lsn;
+	intmax_t offset;
 	uint32_t fileid;
 
 	WT_RET(__wt_config_getones(r->session, config, "id", &cval));
@@ -325,8 +328,10 @@ __recovery_setup_file(WT_RECOVERY *r, const char *uri, const char *config)
 	/* If there is checkpoint logged for the file, apply everything. */
 	if (cval.type != WT_CONFIG_ITEM_STRUCT)
 		WT_INIT_LSN(&lsn);
-	else if (sscanf(cval.str, "(%" PRIu32 ",%" PRIdMAX ")",
-	    &lsn.file, (intmax_t*)&lsn.offset) != 2)
+	else if (sscanf(cval.str,
+	    "(%" SCNu32 ",%" SCNdMAX ")", &lsn.file, &offset) == 2)
+		lsn.offset = offset;
+	else
 		WT_RET_MSG(r->session, EINVAL,
 		    "Failed to parse checkpoint LSN '%.*s'",
 		    (int)cval.len, cval.str);
@@ -371,32 +376,30 @@ __recovery_free(WT_RECOVERY *r)
 static int
 __recovery_file_scan(WT_RECOVERY *r)
 {
-	WT_DECL_RET;
 	WT_CURSOR *c;
-	const char *uri, *config;
+	WT_DECL_RET;
 	int cmp;
+	const char *uri, *config;
 
 	/* Scan through all files in the metadata. */
 	c = r->files[0].c;
 	c->set_key(c, "file:");
 	if ((ret = c->search_near(c, &cmp)) != 0) {
 		/* Is the metadata empty? */
-		if (ret == WT_NOTFOUND)
-			ret = 0;
-		goto err;
+		WT_RET_NOTFOUND_OK(ret);
+		return (0);
 	}
 	if (cmp < 0)
-		WT_ERR_NOTFOUND_OK(c->next(c));
+		WT_RET_NOTFOUND_OK(c->next(c));
 	for (; ret == 0; ret = c->next(c)) {
-		WT_ERR(c->get_key(c, &uri));
+		WT_RET(c->get_key(c, &uri));
 		if (!WT_PREFIX_MATCH(uri, "file:"))
 			break;
-		WT_ERR(c->get_value(c, &config));
-		WT_ERR(__recovery_setup_file(r, uri, config));
+		WT_RET(c->get_value(c, &config));
+		WT_RET(__recovery_setup_file(r, uri, config));
 	}
-	WT_ERR_NOTFOUND_OK(ret);
-
-err:	return (ret);
+	WT_RET_NOTFOUND_OK(ret);
+	return (0);
 }
 
 /*

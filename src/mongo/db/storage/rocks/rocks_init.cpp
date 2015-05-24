@@ -29,8 +29,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/db/storage/rocks/rocks_engine.h"
-
 #include "mongo/base/init.h"
 #include "mongo/db/global_environment_experiment.h"
 #include "mongo/db/storage_options.h"
@@ -38,9 +36,15 @@
 #include "mongo/db/storage/storage_engine_metadata.h"
 #include "mongo/util/mongoutils/str.h"
 
+#include "rocks_engine.h"
+#include "rocks_server_status.h"
+#include "rocks_parameters.h"
+
 namespace mongo {
+    const std::string kRocksDBEngineName = "rocksdb";
 
     namespace {
+
         class RocksFactory : public StorageEngine::Factory {
         public:
             virtual ~RocksFactory(){}
@@ -51,12 +55,18 @@ namespace mongo {
                 options.forRepair = params.repair;
                 // Mongo keeps some files in params.dbpath. To avoid collision, put out files under
                 // db/ directory
-                return new KVStorageEngine(new RocksEngine(params.dbpath + "/db", params.dur),
-                                           options);
+                auto engine = new RocksEngine(params.dbpath + "/db", params.dur);
+                // Intentionally leaked.
+                auto leaked __attribute__((unused)) = new RocksServerStatusSection(engine);
+                auto leaked2 __attribute__((unused)) = new RocksRateLimiterServerParameter(engine);
+                auto leaked3 __attribute__((unused)) = new RocksBackupServerParameter(engine);
+                auto leaked4 __attribute__((unused)) = new RocksCompactServerParameter(engine);
+
+                return new KVStorageEngine(engine, options);
             }
 
             virtual StringData getCanonicalName() const {
-                return "rocksExperiment";
+                return kRocksDBEngineName;
             }
 
             virtual Status validateCollectionStorageOptions(const BSONObj& options) const {
@@ -101,7 +111,11 @@ namespace mongo {
             // and mongorestore.
             // * Version 1 was the format with many column families -- one column family for each
             // collection and index
-            // * Version 2 (current) keeps all collections and indexes in a single column family
+            // * Version 2 keeps all collections and indexes in a single column family
+            // * Version 3 (current) reserves two prefixes for oplog. one prefix keeps the oplog
+            // documents and another only keeps keys. That way, we can cleanup the oplog without
+            // reading full documents
+            // oplog cleanup
             const int kRocksFormatVersion = 2;
             const std::string kRocksFormatVersionString = "rocksFormatVersion";
         };
@@ -111,7 +125,7 @@ namespace mongo {
                                          ("SetGlobalEnvironment"))
                                          (InitializerContext* context) {
 
-        getGlobalEnvironment()->registerStorageEngine("rocksExperiment", new RocksFactory());
+        getGlobalEnvironment()->registerStorageEngine(kRocksDBEngineName, new RocksFactory());
         return Status::OK();
     }
 

@@ -377,7 +377,7 @@ namespace mongo {
                 break;
 
             case 'u':
-                Client::Context ctx(txn, _ns);
+                Client::Context ctx(txn, _ns, false);
                 if (!Helpers::findById(txn, ctx.db(), _ns.c_str(), ide.wrap(), it)) {
                     warning() << "logOpForSharding couldn't find: " << ide
                               << " even though should have" << migrateLog;
@@ -2537,7 +2537,7 @@ namespace mongo {
             while (_active) {
                 if ( ! isActiveCV.timed_wait( lock.boost(), xt ) ){
                     // TIMEOUT
-                    setState(FAIL);
+                    _state = FAIL;
                     log() << "startCommit never finished!" << migrateLog;
                     return false;
                 }

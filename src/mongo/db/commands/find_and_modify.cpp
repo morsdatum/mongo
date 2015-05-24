@@ -41,6 +41,7 @@
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/projection.h"
 #include "mongo/db/ops/delete.h"
+#include "mongo/db/ops/insert.h"
 #include "mongo/db/ops/update.h"
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/query/get_executor.h"
@@ -84,6 +85,10 @@ namespace mongo {
                          bool fromRepl) {
 
             const std::string ns = parseNsCollectionRequired(dbname, cmdObj);
+            Status allowedWriteStatus = userAllowedWriteNS(ns);
+            if (!allowedWriteStatus.isOK()) {
+                return appendCommandStatus(result, allowedWriteStatus);
+            }
 
             const BSONObj query = cmdObj.getObjectField("query");
             const BSONObj fields = cmdObj.getObjectField("fields");
@@ -368,14 +373,23 @@ namespace mongo {
             }
 
             if ( remove ) {
-                _appendHelper(result, doc, found, fields, whereCallback);
+                BSONObj oldDoc = doc.getOwned();
                 if ( found ) {
                     deleteObjects(txn, ctx.db(), ns, queryModified, PlanExecutor::YIELD_MANUAL,
                                   true, true);
+
+                    // Committing the WUOW can close the current snapshot. Until this happens, the
+                    // snapshot id should not have changed.
+                    invariant(txn->recoveryUnit()->getSnapshotId() == snapshotDoc.snapshotId());
+
+                    // Must commit the write before doing anything that could throw.
+                    wuow.commit();
+
                     BSONObjBuilder le( result.subobjStart( "lastErrorObject" ) );
                     le.appendNumber( "n" , 1 );
                     le.done();
                 }
+                _appendHelper(result, oldDoc, found, fields, whereCallback);
             }
             else {
                 // update
@@ -424,6 +438,9 @@ namespace mongo {
                         // for some BSON manipulation).
                         repl::logOp(txn, "i", collection->ns().ns().c_str(), newDoc);
 
+                        // Must commit the write and logOp() before doing anything that could throw.
+                        wuow.commit();
+
                         // The third argument indicates whether or not we have something for the
                         // 'value' field returned by a findAndModify command.
                         //
@@ -442,8 +459,9 @@ namespace mongo {
                 else {
                     // we found it or we're updating
 
+                    BSONObj oldDoc;
                     if ( ! returnNew ) {
-                        _appendHelper(result, doc, found, fields, whereCallback);
+                        oldDoc = doc.getOwned();
                     }
 
                     const NamespaceString requestNs(ns);
@@ -470,9 +488,19 @@ namespace mongo {
                     invariant(res.existing);
                     LOG(3) << "update result: "  << res;
 
+                    // Committing the WUOW can close the current snapshot. Until this happens, the
+                    // snapshot id should not have changed.
+                    invariant(txn->recoveryUnit()->getSnapshotId() == snapshotDoc.snapshotId());
+
+                    // Must commit the write before doing anything that could throw.
+                    wuow.commit();
+
                     if (returnNew) {
                         dassert(!res.newObj.isEmpty());
                         _appendHelper(result, res.newObj, true, fields, whereCallback);
+                    }
+                    else {
+                        _appendHelper(result, oldDoc, found, fields, whereCallback);
                     }
 
                     BSONObjBuilder le( result.subobjStart( "lastErrorObject" ) );
@@ -484,13 +512,6 @@ namespace mongo {
                     le.done();
                 }
             }
-
-            // Committing the WUOW can close the current snapshot. Until this happens, the
-            // snapshot id should not have changed.
-            if (found) {
-                invariant(txn->recoveryUnit()->getSnapshotId() == snapshotDoc.snapshotId());
-            }
-            wuow.commit();
 
             return true;
         }

@@ -130,7 +130,7 @@ static int
 __open_index(WT_SESSION_IMPL *session, WT_TABLE *table, WT_INDEX *idx)
 {
 	WT_CONFIG colconf;
-	WT_CONFIG_ITEM ckey, cval;
+	WT_CONFIG_ITEM ckey, cval, metadata;
 	WT_DECL_ITEM(buf);
 	WT_DECL_ITEM(plan);
 	WT_DECL_RET;
@@ -146,6 +146,22 @@ __open_index(WT_SESSION_IMPL *session, WT_TABLE *table, WT_INDEX *idx)
 	WT_ERR(__wt_config_getones(session, idx->config, "immutable", &cval));
 	if (cval.val)
 		F_SET(idx, WT_INDEX_IMMUTABLE);
+
+	/*
+	 * Compatibility: we didn't always maintain collator information in
+	 * index metadata, cope when it isn't found.
+	 */
+	WT_CLEAR(cval);
+	WT_ERR_NOTFOUND_OK(__wt_config_getones(
+	    session, idx->config, "collator", &cval));
+	if (cval.len != 0) {
+		WT_CLEAR(metadata);
+		WT_ERR_NOTFOUND_OK(__wt_config_getones(
+		    session, idx->config, "app_metadata", &metadata));
+		WT_ERR(__wt_collator_config(
+		    session, idx->name, &cval, &metadata,
+		    &idx->collator, &idx->collator_owned));
+	}
 
 	WT_ERR(__wt_extractor_config(
 	    session, idx->config, &idx->extractor, &idx->extractor_owned));
@@ -171,13 +187,12 @@ __open_index(WT_SESSION_IMPL *session, WT_TABLE *table, WT_INDEX *idx)
 
 	/* Start with the declared index columns. */
 	WT_ERR(__wt_config_subinit(session, &colconf, &idx->colconf));
-	npublic_cols = 0;
-	while ((ret = __wt_config_next(&colconf, &ckey, &cval)) == 0) {
+	for (npublic_cols = 0;
+	    (ret = __wt_config_next(&colconf, &ckey, &cval)) == 0;
+	    ++npublic_cols)
 		WT_ERR(__wt_buf_catfmt(
 		    session, buf, "%.*s,", (int)ckey.len, ckey.str));
-		++npublic_cols;
-	}
-	if (ret != 0 && ret != WT_NOTFOUND)
+	if (ret != WT_NOTFOUND)
 		goto err;
 
 	/*

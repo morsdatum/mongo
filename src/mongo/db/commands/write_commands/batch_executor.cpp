@@ -66,6 +66,7 @@
 #include "mongo/s/collection_metadata.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/shard_key_pattern.h"
+#include "mongo/s/stale_exception.h"
 #include "mongo/s/write_ops/batched_upsert_detail.h"
 #include "mongo/s/write_ops/write_error_detail.h"
 #include "mongo/util/elapsed_tracker.h"
@@ -228,11 +229,6 @@ namespace mongo {
             return;
         }
 
-        if ( writeConcern.syncMode == WriteConcernOptions::JOURNAL ||
-             writeConcern.syncMode == WriteConcernOptions::FSYNC ) {
-            _txn->recoveryUnit()->goingToAwaitCommit();
-        }
-
         if ( request.sizeWriteOps() == 0u ) {
             toBatchError( Status( ErrorCodes::InvalidLength,
                                   "no write ops were included in the batch" ),
@@ -269,7 +265,7 @@ namespace mongo {
         // Stops on error if batch is ordered.
         //
 
-        bulkExecute( request, &upserted, &writeErrors );
+        bulkExecute( request, writeConcern, &upserted, &writeErrors );
 
         //
         // Try to enforce the write concern if everything succeeded (unordered or ordered)
@@ -759,15 +755,27 @@ namespace mongo {
         Collection* _collection;
     };
 
+    void setupSynchronousCommit( const WriteConcernOptions& writeConcern,
+                                 OperationContext* txn ) {
+        if ( writeConcern.syncMode == WriteConcernOptions::JOURNAL ||
+             writeConcern.syncMode == WriteConcernOptions::FSYNC ) {
+            txn->recoveryUnit()->goingToAwaitCommit();
+        }
+    }
+
     void WriteBatchExecutor::bulkExecute( const BatchedCommandRequest& request,
+                                          const WriteConcernOptions& writeConcern,
                                           std::vector<BatchedUpsertDetail*>* upsertedIds,
                                           std::vector<WriteErrorDetail*>* errors ) {
 
         if ( request.getBatchType() == BatchedCommandRequest::BatchType_Insert ) {
-            execInserts( request, errors );
+            execInserts( request, writeConcern, errors );
         }
         else if ( request.getBatchType() == BatchedCommandRequest::BatchType_Update ) {
             for ( size_t i = 0; i < request.sizeWriteOps(); i++ ) {
+
+                if ( i + 1 == request.sizeWriteOps() )
+                    setupSynchronousCommit( writeConcern, _txn );
 
                 WriteErrorDetail* error = NULL;
                 BSONObj upsertedId;
@@ -790,6 +798,9 @@ namespace mongo {
         else {
             dassert( request.getBatchType() == BatchedCommandRequest::BatchType_Delete );
             for ( size_t i = 0; i < request.sizeWriteOps(); i++ ) {
+
+                if ( i + 1 == request.sizeWriteOps() )
+                    setupSynchronousCommit( writeConcern, _txn );
 
                 WriteErrorDetail* error = NULL;
                 execRemove( BatchItemRef( &request, i ), &error );
@@ -832,6 +843,7 @@ namespace mongo {
     }
 
     void WriteBatchExecutor::execInserts( const BatchedCommandRequest& request,
+                                          const WriteConcernOptions& writeConcern,
                                           std::vector<WriteErrorDetail*>* errors ) {
 
         // Theory of operation:
@@ -856,6 +868,17 @@ namespace mongo {
         ExecInsertsState state(_txn, &request);
         normalizeInserts(request, &state.normalizedInserts);
 
+        ShardedConnectionInfo* info = ShardedConnectionInfo::get(false);
+        if (info) {
+            if (request.isMetadataSet() && request.getMetadata()->isShardVersionSet()) {
+                info->setVersion(request.getTargetingNS(),
+                                 request.getMetadata()->getShardVersion());
+            }
+            else {
+                info->setVersion(request.getTargetingNS(), ChunkVersion::IGNORED());
+            }
+        }
+
         // Yield frequency is based on the same constants used by PlanYieldPolicy.
         ElapsedTracker elapsedTracker(internalQueryExecYieldIterations,
                                       internalQueryExecYieldPeriodMS);
@@ -863,6 +886,9 @@ namespace mongo {
         for (state.currIndex = 0;
              state.currIndex < state.request->sizeWriteOps();
              ++state.currIndex) {
+
+            if (state.currIndex + 1 == state.request->sizeWriteOps())
+                setupSynchronousCommit(writeConcern, _txn);
 
             if (elapsedTracker.intervalHasElapsed()) {
                 // Yield between inserts.
@@ -901,6 +927,20 @@ namespace mongo {
         beginCurrentOp( &currentOp, _txn->getClient(), updateItem );
         incOpStats( updateItem );
 
+        ShardedConnectionInfo* info = ShardedConnectionInfo::get(false);
+        if (info) {
+            const BatchedCommandRequest* rootRequest = updateItem.getRequest();
+            if (!updateItem.getUpdate()->getMulti() &&
+                    rootRequest->isMetadataSet() &&
+                    rootRequest->getMetadata()->isShardVersionSet()) {
+                info->setVersion(rootRequest->getTargetingNS(),
+                                 rootRequest->getMetadata()->getShardVersion());
+            }
+            else {
+                info->setVersion(rootRequest->getTargetingNS(), ChunkVersion::IGNORED());
+            }
+        }
+
         WriteOpResult result;
 
         multiUpdate( _txn, updateItem, &result );
@@ -930,6 +970,20 @@ namespace mongo {
         CurOp currentOp( _txn->getClient(), _txn->getClient()->curop() );
         beginCurrentOp( &currentOp, _txn->getClient(), removeItem );
         incOpStats( removeItem );
+
+        ShardedConnectionInfo* info = ShardedConnectionInfo::get(false);
+        if (info) {
+            const BatchedCommandRequest* rootRequest = removeItem.getRequest();
+            if (removeItem.getDelete()->getLimit() == 1 &&
+                    rootRequest->isMetadataSet() &&
+                    rootRequest->getMetadata()->isShardVersionSet()) {
+                info->setVersion(rootRequest->getTargetingNS(),
+                                 rootRequest->getMetadata()->getShardVersion());
+            }
+            else {
+                info->setVersion(rootRequest->getTargetingNS(), ChunkVersion::IGNORED());
+            }
+        }
 
         WriteOpResult result;
 
@@ -1085,6 +1139,14 @@ namespace mongo {
                                                        state->getCollection() ?
                                                        state->getCollection()->ns().ns() :
                                                        "index" );
+            }
+            catch (const StaleConfigException& staleExcep) {
+                result->setError(new WriteErrorDetail);
+                result->getError()->setErrCode(ErrorCodes::StaleShardVersion);
+                buildStaleError(staleExcep.getVersionReceived(),
+                                staleExcep.getVersionWanted(),
+                                result->getError());
+                break;
             }
             catch (const DBException& ex) {
                 Status status(ex.toStatus());
@@ -1341,6 +1403,13 @@ namespace mongo {
 
                 WriteConflictException::logAndBackoff( attempt++, "update", nsString.ns() );
             }
+            catch (const StaleConfigException& staleExcep) {
+                result->setError(new WriteErrorDetail);
+                result->getError()->setErrCode(ErrorCodes::StaleShardVersion);
+                buildStaleError(staleExcep.getVersionReceived(),
+                                staleExcep.getVersionWanted(),
+                                result->getError());
+            }
             catch (const DBException& ex) {
                 Status status = ex.toStatus();
                 if (ErrorCodes::isInterruption(status.code())) {
@@ -1423,6 +1492,14 @@ namespace mongo {
             catch ( const WriteConflictException& dle ) {
                 txn->getCurOp()->debug().writeConflicts++;
                 WriteConflictException::logAndBackoff( attempt++, "delete", nss.ns() );
+            }
+            catch (const StaleConfigException& staleExcep) {
+                result->setError(new WriteErrorDetail);
+                result->getError()->setErrCode(ErrorCodes::StaleShardVersion);
+                buildStaleError(staleExcep.getVersionReceived(),
+                                staleExcep.getVersionWanted(),
+                                result->getError());
+                return;
             }
             catch ( const DBException& ex ) {
                 Status status = ex.toStatus();

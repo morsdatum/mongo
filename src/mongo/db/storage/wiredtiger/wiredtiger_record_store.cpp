@@ -106,6 +106,7 @@ namespace {
         // for workloads where updates increase the size of documents.
         ss << "split_pct=90,";
         ss << "leaf_value_max=1MB,";
+        ss << "checksum=on,";
         if (wiredTigerGlobalOptions.useCollectionPrefixCompression) {
             ss << "prefix_compression,";
         }
@@ -726,7 +727,7 @@ namespace {
         WiredTigerSessionCache* cache = WiredTigerRecoveryUnit::get(txn)->getSessionCache();
         WiredTigerSession* session = cache->getSession();
         WT_SESSION *s = session->getSession();
-        int ret = s->compact(s, getURI().c_str(), NULL);
+        int ret = s->compact(s, getURI().c_str(), "timeout=0");
         invariantWTOK(ret);
         cache->releaseSession(session);
         return Status::OK();
@@ -738,6 +739,25 @@ namespace {
                                             ValidateAdaptor* adaptor,
                                             ValidateResults* results,
                                             BSONObjBuilder* output ) {
+
+        {
+            int err = WiredTigerUtil::verifyTable(txn, _uri, &results->errors);
+            if (err == EBUSY) {
+                const char* msg = "verify() returned EBUSY. Not treating as invalid.";
+                warning() << msg;
+                results->errors.push_back(msg);
+            }
+            else if (err) {
+                std::string msg = str::stream()
+                    << "verify() returned " << wiredtiger_strerror(err) << ". "
+                    << "This indicates structural damage. "
+                    << "Not examining individual documents.";
+                error() << msg;
+                results->errors.push_back(msg);
+                results->valid = false;
+                return Status::OK();
+            }
+        }
 
         long long nrecords = 0;
         long long dataSizeTotal = 0;
@@ -786,17 +806,6 @@ namespace {
         }
 
         output->appendNumber( "nrecords", nrecords );
-
-        WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession(txn);
-        WT_SESSION* s = session->getSession();
-        BSONObjBuilder bob(output->subobjStart(kWiredTigerEngineName));
-        Status status = WiredTigerUtil::exportTableToBSON(s, "statistics:" + getURI(),
-                                                          "statistics=(fast)", &bob);
-        if (!status.isOK()) {
-            bob.append("error", "unable to retrieve statistics");
-            bob.append("code", static_cast<int>(status.code()));
-            bob.append("reason", status.reason());
-        }
         return Status::OK();
     }
 

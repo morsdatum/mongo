@@ -222,7 +222,7 @@ namespace mongo {
     Status BtreeBasedAccessMethod::validate(OperationContext* txn, bool full, int64_t* numKeys,
                                             BSONObjBuilder* output) {
         // XXX: long long vs int64_t
-        long long keys;
+        long long keys = 0;
         _newInterface->fullValidate(txn, full, &keys, output);
         *numKeys = keys;
         return Status::OK();
@@ -288,6 +288,11 @@ namespace mongo {
                                                   data->loc,
                                                   data->dupsAllowed);
             if ( !status.isOK() ) {
+                if (status.code() == ErrorCodes::KeyTooLong && ignoreKeyTooLong(txn)) {
+                    // Ignore.
+                    continue;
+                }
+
                 return status;
             }
         }

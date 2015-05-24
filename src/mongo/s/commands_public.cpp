@@ -46,6 +46,7 @@
 #include "mongo/db/auth/privilege.h"
 #include "mongo/db/commands/copydb.h"
 #include "mongo/db/commands/find_and_modify.h"
+#include "mongo/db/commands/list_collections.h"
 #include "mongo/db/commands/mr.h"
 #include "mongo/db/commands/rename_collection.h"
 #include "mongo/db/commands.h"
@@ -2323,6 +2324,11 @@ namespace mongo {
                              string& errmsg,
                              BSONObjBuilder& result,
                              bool) {
+
+                RARELY {
+                    warning() << "the eval command is deprecated" << startupWarningsLog;
+                }
+
                 // $eval isn't allowed to access sharded collections, but we need to leave the
                 // shard to detect that.
                 DBConfigPtr conf = grid.getDBConfig( dbName , false );
@@ -2804,12 +2810,10 @@ namespace mongo {
         class CmdListCollections : public ListPassthroughWithAggFallbackCommand {
         public:
             CmdListCollections() : ListPassthroughWithAggFallbackCommand( "listCollections" ) {}
-            virtual void addRequiredPrivileges(const std::string& dbname,
-                                               const BSONObj& cmdObj,
-                                               std::vector<Privilege>* out) {
-                ActionSet actions;
-                actions.addAction(ActionType::listCollections);
-                out->push_back(Privilege(ResourcePattern::forDatabaseName(dbname), actions));
+            virtual Status checkAuthForCommand(ClientBasic* client,
+                                            const std::string& dbname,
+                                            const BSONObj& cmdObj) {
+                return checkAuthForListCollectionsCommand(client, dbname, cmdObj);
             }
 
         private:

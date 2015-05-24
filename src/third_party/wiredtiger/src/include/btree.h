@@ -123,6 +123,8 @@ struct __wt_btree {
 	WT_BM	*bm;			/* Block manager reference */
 	u_int	 block_header;		/* WT_PAGE_HEADER_BYTE_SIZE */
 
+	uint64_t checkpoint_gen;	/* Checkpoint generation */
+	uint64_t rec_max_txn;		/* Maximum txn seen (clean trees) */
 	uint64_t write_gen;		/* Write generation */
 
 	WT_REF  *evict_ref;		/* Eviction thread's location */
@@ -142,8 +144,8 @@ struct __wt_btree {
 
 	/* Flags values up to 0xff are reserved for WT_DHANDLE_* */
 #define	WT_BTREE_BULK		0x00100	/* Bulk-load handle */
-#define	WT_BTREE_NO_EVICTION	0x00200	/* Disable eviction */
-#define	WT_BTREE_NO_HAZARD	0x00400	/* Disable hazard pointers */
+#define	WT_BTREE_IN_MEMORY	0x00200	/* Cache-resident object */
+#define	WT_BTREE_NO_EVICTION	0x00400	/* Disable eviction */
 #define	WT_BTREE_SALVAGE	0x00800	/* Handle is for salvage */
 #define	WT_BTREE_UPGRADE	0x01000	/* Handle is for upgrade */
 #define	WT_BTREE_VERIFY		0x02000	/* Handle is for verify */

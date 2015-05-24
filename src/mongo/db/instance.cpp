@@ -126,8 +126,7 @@ namespace mongo {
     bool receivedGetMore(OperationContext* txn,
                          DbResponse& dbresponse,
                          Message& m,
-                         CurOp& curop,
-                         bool fromDBDirectClient);
+                         CurOp& curop);
 
     int nloggedsome = 0;
 #define LOGWITHRATELIMIT if( ++nloggedsome < 1000 || nloggedsome % 100 == 0 )
@@ -195,8 +194,7 @@ namespace mongo {
     static bool receivedQuery(OperationContext* txn,
                               Client& c,
                               DbResponse& dbresponse,
-                              Message& m,
-                              bool fromDBDirectClient) {
+                              Message& m) {
         bool ok = true;
         MSGID responseTo = m.header().getId();
 
@@ -217,7 +215,7 @@ namespace mongo {
                 audit::logQueryAuthzCheck(client, ns, q.query, status.code());
                 uassertStatusOK(status);
             }
-            dbresponse.exhaustNS = runQuery(txn, m, q, ns, op, *resp, fromDBDirectClient);
+            dbresponse.exhaustNS = runQuery(txn, m, q, ns, op, *resp);
             verify( !resp->empty() );
         }
         catch ( SendStaleConfigException& e ){
@@ -298,8 +296,7 @@ namespace mongo {
     void assembleResponse( OperationContext* txn,
                            Message& m,
                            DbResponse& dbresponse,
-                           const HostAndPort& remote,
-                           bool fromDBDirectClient ) {
+                           const HostAndPort& remote) {
         // before we lock...
         int op = m.operation();
         bool isCommand = false;
@@ -307,7 +304,7 @@ namespace mongo {
         DbMessage dbmsg(m);
 
         Client& c = *txn->getClient();
-        if (!txn->isGod()) {
+        if (!txn->getClient()->isInDirectClient()) {
             c.getAuthorizationSession()->startRequest(txn);
 
             // We should not be holding any locks at this point
@@ -400,10 +397,10 @@ namespace mongo {
                                                               logger::LogSeverity::Debug(1));
 
         if ( op == dbQuery ) {
-            receivedQuery(txn, c , dbresponse, m, fromDBDirectClient );
+            receivedQuery(txn, c , dbresponse, m);
         }
         else if ( op == dbGetMore ) {
-            if ( ! receivedGetMore(txn, dbresponse, m, currentOp, fromDBDirectClient) )
+            if ( ! receivedGetMore(txn, dbresponse, m, currentOp) )
                 shouldLog = true;
         }
         else if ( op == dbMsg ) {
@@ -631,7 +628,7 @@ namespace mongo {
 
         //  This is an upsert into a non-existing database, so need an exclusive lock
         //  to avoid deadlock
-        {
+        MONGO_WRITE_CONFLICT_RETRY_LOOP_BEGIN {
             ParsedUpdate parsedUpdate(txn, &request);
             uassertStatusOK(parsedUpdate.parseRequest());
 
@@ -669,7 +666,7 @@ namespace mongo {
             UpdateResult res = UpdateStage::makeUpdateResult(exec.get(), &op.debug());
 
             lastError.getSafe()->recordUpdate( res.existing , res.numMatched , res.upserted );
-        }
+        } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "update", ns.ns());
     }
 
     void receivedDelete(OperationContext* txn, Message& m, CurOp& op) {
@@ -741,8 +738,7 @@ namespace mongo {
     bool receivedGetMore(OperationContext* txn,
                          DbResponse& dbresponse,
                          Message& m,
-                         CurOp& curop,
-                         bool fromDBDirectClient) {
+                         CurOp& curop) {
         bool ok = true;
 
         DbMessage d(m);
@@ -792,8 +788,7 @@ namespace mongo {
                                   curop,
                                   pass,
                                   exhaust,
-                                  &isCursorAuthorized,
-                                  fromDBDirectClient);
+                                  &isCursorAuthorized);
             }
             catch ( AssertionException& e ) {
                 if ( isCursorAuthorized ) {
@@ -1111,12 +1106,25 @@ namespace mongo {
         getGlobalEnvironment()->shutdownGlobalStorageEngineCleanly();
     }
 
+    // shutdownLock
+    //
+    // Protects:
+    //  Ensures shutdown is single threaded.
+    // Lock Ordering:
+    //  No restrictions
+    boost::mutex shutdownLock;
+
+    void signalShutdown() {
+        // Notify all threads shutdown has started
+        shutdownInProgress.fetchAndAdd(1);
+    }
+
     void exitCleanly(ExitCode code) {
-        if (shutdownInProgress.fetchAndAdd(1) != 0) {
-            while (true) {
-                sleepsecs(1000);
-            }
-        }
+        // Notify all threads shutdown has started
+        shutdownInProgress.fetchAndAdd(1);
+
+        // Grab the shutdown lock to prevent concurrent callers
+        boost::lock_guard<boost::mutex> lockguard(shutdownLock);
 
         // Global storage engine may not be started in all cases before we exit
         if (getGlobalEnvironment()->getGlobalStorageEngine() == NULL) {
